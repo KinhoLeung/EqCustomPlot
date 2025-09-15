@@ -93,8 +93,3 @@ setCentralWidget(eqPlot);               // 在你的 QMainWindow 中
 
 欢迎提交 Issue 与 PR。请尽量保持修改聚焦并补充必要说明。
 
-## 许可
-
-本仓库内置 QCustomPlot，其开源许可为 GPLv3（或可购买商业许可）。请确保你的整体项目许可与 QCustomPlot 条款兼容；若计划闭源分发，请购买 QCustomPlot 商业许可或替换为其他库。
-
-建议在仓库根目录添加 `LICENSE` 文件以声明你原创代码的许可（例如为与 QCustomPlot 默认兼容，可选择 GPL-3.0-only）。第三方组件仍受各自许可约束。

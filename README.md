@@ -92,14 +92,3 @@ Assets:
 ## Contributing
 
 Issues and pull requests are welcome. Please keep changes focused and documented.
-
-## License
-
-This repository embeds QCustomPlot, which is available under GPLv3 for open-source use or a commercial license. Ensure your project’s license is compatible with QCustomPlot’s terms. If you plan to distribute closed-source binaries, obtain a QCustomPlot commercial license or replace it with an alternative.
-
-Add a `LICENSE` file at the repository root to declare the license of your own code (e.g., GPL-3.0-only to remain compatible by default). Third-party licenses still apply to their respective components.
-
-## Acknowledgements
-
-- [QCustomPlot](https://www.qcustomplot.com/) for the plotting engine
-- Qt team for the robust Qt framework

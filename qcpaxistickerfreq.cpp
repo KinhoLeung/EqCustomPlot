@@ -91,9 +91,9 @@ QString QCPAxisTickerFreq::formatHz(double f) const
         double k = f / 1000.0;
         if (mKiloRound)
             k = qRound(k);
-        return QString::number(k, 'g', 6) + "k" /* + "kHz"*/;
+        return QString::number(k, 'g', 6) + "k";
     }
-    return QString::number(qRound(f)) /* + "Hz"*/;
+    return QString::number(qRound(f));
 }
 
 double QCPAxisTickerFreq::getTickStep(const QCPRange &range)

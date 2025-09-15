@@ -1,6 +1,7 @@
 # EqCustomPlot
+
 <p align="center">
-  <a href="README.md">English</a> | <a href="README_zh.md">中文</a>
+  <a href="README.md">English</a> | <a href="README_zh-CN.md">中文</a>
 </p>
 一个基于 Qt 6 和 QCustomPlot 的交互式均衡器曲线控件与演示程序。它展示了可编辑的频响曲线、自定义频率坐标刻度（Hz/kHz）、明暗两套 SVG 图标，以及简洁的 Qt Widgets 界面。
 

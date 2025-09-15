@@ -1,6 +1,7 @@
 # EqCustomPlot
+
 <p align="center">
-  <a href="README.md">English</a> | <a href="README_zh.md">中文</a>
+  <a href="README.md">English</a> | <a href="README_zh-CN.md">中文</a>
 </p>
 Interactive equalizer curve widget and demo application built with Qt 6 and QCustomPlot. It showcases a frequency response editor with a custom frequency axis ticker, light/dark SVG icons, and a simple Qt Widgets UI.
 

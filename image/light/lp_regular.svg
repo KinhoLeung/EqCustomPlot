@@ -1,0 +1,6 @@
+<svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="48" height="48" fill="none">
+	<rect id="lp_regular" width="48" height="48" x="0" y="0" fill="rgb(0,0,0)" fill-opacity="0" />
+	<circle id="r" cx="24" cy="24" r="22.5" stroke="rgb(0,0,0)" stroke-width="3" />
+	<path id="f" d="M10.32 16.44L26.52 16.44" stroke="rgb(0,0,0)" stroke-linecap="round" stroke-width="3" />
+	<path id="g" d="M0 0L16.79 0" stroke="rgb(0,0,0)" stroke-linecap="round" stroke-width="3" transform="matrix(0.5,0.866025,-0.866025,0.5,26.52,16.44)" />
+</svg>

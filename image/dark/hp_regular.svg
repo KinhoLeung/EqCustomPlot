@@ -1,0 +1,6 @@
+<svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="48" height="48" fill="none" customFrame="#000000">
+	<rect id="hp_regular" width="48" height="48" x="0" y="0" />
+	<circle id="r" cx="24" cy="24" r="22.5" stroke="rgb(255,255,255)" stroke-width="3" />
+	<path id="f" d="M21.48 14.94L37.68 14.94L37.68 17.94L21.48 17.94L21.48 14.94ZM37.66 14.96L37.68 14.94C38.52 14.94 39.18 15.6 39.18 16.44C39.18 17.28 38.52 17.94 37.68 17.94L37.66 17.92L37.66 14.96Z" fill="rgb(255,255,255)" fill-rule="nonzero" />
+	<path id="g" d="M0 0L16.79 0" stroke="rgb(255,255,255)" stroke-linecap="round" stroke-width="3" transform="matrix(-0.5,0.866025,-0.866025,-0.5,21.48,16.44)" />
+</svg>

@@ -1,6 +1,6 @@
 #include "qcpaxistickerfreq.h"
-#include <QtMath>
 #include <algorithm>
+#include <cmath>
 
 QCPAxisTickerFreq::QCPAxisTickerFreq()
 {
@@ -42,29 +42,29 @@ bool QCPAxisTickerFreq::approxEqual(double a, double b, double relTol)
 {
     if (a == b)
         return true;
-    const double denom = qMax(qAbs(a), qAbs(b));
+    const double denom = std::max(std::abs(a), std::abs(b));
     if (denom == 0)
-        return qAbs(a - b) < 1e-12;
-    return qAbs(a - b) / denom <= relTol;
+        return std::abs(a - b) < 1e-12;
+    return std::abs(a - b) / denom <= relTol;
 }
 
 double QCPAxisTickerFreq::ipow10(int p)
 {
-    return qPow(10.0, p);
+    return std::pow(10.0, p);
 }
 
 int QCPAxisTickerFreq::floorDecade(double v)
 {
     if (v <= 0)
         return -9;
-    return (int)qFloor(qLn(v) / qLn(10.0));
+    return (int)std::floor(std::log10(v));
 }
 
 int QCPAxisTickerFreq::ceilDecade(double v)
 {
     if (v <= 0)
         return -9;
-    return (int)qCeil(qLn(v) / qLn(10.0));
+    return (int)std::ceil(std::log10(v));
 }
 
 void QCPAxisTickerFreq::normalizeMantissa(double v, int &d, double &base, double &m) const
@@ -90,10 +90,10 @@ QString QCPAxisTickerFreq::formatHz(double f) const
     {
         double k = f / 1000.0;
         if (mKiloRound)
-            k = qRound(k);
+            k = std::lround(k);
         return QString::number(k, 'g', 6) + "k";
     }
-    return QString::number(qRound(f));
+    return QString::number((int)std::lround(f));
 }
 
 double QCPAxisTickerFreq::getTickStep(const QCPRange &range)
@@ -112,8 +112,8 @@ QVector<double> QCPAxisTickerFreq::createTickVector(double tickStep, const QCPRa
     const int dFirst = floorDecade(range.lower);
     const int dLast = ceilDecade(range.upper);
 
-    const int dMin = mBoundDecades ? qMax(dFirst, (int)mMinDecade) : dFirst;
-    const int dMax = mBoundDecades ? qMin(dLast, (int)mMaxDecade) : dLast;
+    const int dMin = mBoundDecades ? std::max(dFirst, (int)mMinDecade) : dFirst;
+    const int dMax = mBoundDecades ? std::min(dLast, (int)mMaxDecade) : dLast;
 
     for (int d = dMin; d <= dMax; ++d)
     {

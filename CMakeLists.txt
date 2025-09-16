@@ -28,7 +28,6 @@ target_link_libraries(EqCustomPlot
     PRIVATE
         Qt::Core
         Qt::Widgets
-        Qt::Svg
         Qt::PrintSupport
 )
 

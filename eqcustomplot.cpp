@@ -1,8 +1,5 @@
 #include "eqcustomplot.h"
 #include "qcpaxistickerfreq.h"
-#include <QSvgRenderer>
-#include <_mingw_stat64.h>
-#include <qsize.h>
 
 EqCustomPlot::EqCustomPlot(QWidget *parent) : QCustomPlot(parent)
 {

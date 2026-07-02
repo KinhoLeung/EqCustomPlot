@@ -1,480 +1,1202 @@
 #include "eqcustomplot.h"
-#include "qcpaxistickerfreq.h"
 
-EqCustomPlot::EqCustomPlot(QWidget *parent) : QCustomPlot(parent)
+#include <QApplication>
+#include <QEvent>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QResizeEvent>
+#include <QStyleHints>
+#include <QTouchEvent>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace
 {
-    Qt::ColorScheme theme = QApplication::styleHints()->colorScheme();
-    QColor themeColor = theme == Qt::ColorScheme::Dark ? Qt::white : Qt::black;
-    QColor curvePenColor = QApplication::palette().color(QPalette::Accent);
-    QColor curveBurshColor = curvePenColor;
-    curveBurshColor.setAlphaF(0.25);
+constexpr int kLocalMinAxisFrequency = 16;
+constexpr int kLocalMaxAxisFrequency = 25000;
+constexpr int kLocalMinBandFrequency = 20;
+constexpr int kLocalMaxBandFrequency = 20000;
+const double kAxisMinLog = std::log10(kLocalMinAxisFrequency);
+const double kAxisMaxLog = std::log10(kLocalMaxAxisFrequency);
+const double kBandMinLog = std::log10(kLocalMinBandFrequency);
+const double kBandMaxLog = std::log10(kLocalMaxBandFrequency);
+constexpr int kFrameIntervalMs = 16;
 
-    QString prefixStr = theme == Qt::ColorScheme::Dark ? ":/image/dark/" : ":/image/light/";
-
-    mMouseButton = Qt::NoButton;
-
-    mMenu = new QMenu(this);
-    mBypassAction = mMenu->addAction("Bypass");
-    mSoloAction = mMenu->addAction("Solo");
-    mFilterTypeMenu = new QMenu("Filter Type", mMenu);
-    mFilterTypeAction = mMenu->addMenu(mFilterTypeMenu);
-    mBypassAction->setCheckable(true);
-    mSoloAction->setCheckable(true);
-    connect(mBypassAction, &QAction::triggered, this, [=]() {
-        bool bypass = mSelectedScatter->property("bypass").toBool();
-        bypass = !bypass;
-        mSelectedScatter->setProperty("bypass", bypass);
-        mBypassAction->setChecked(bypass);
-        drawEqCurve(mSelectedScatter);
-    });
-
-    connect(mSoloAction, &QAction::triggered, this, [=]() {
-        static bool bypass[EqCount];
-        if (mSoloAction->isChecked())
-        {
-            for (int i = 0; i < EqCount; i++)
-            {
-                if (mSelectedScatter != mScatter[i])
-                {
-                    bypass[i] = mScatter[i]->property("bypass").toBool();
-                    mScatter[i]->setProperty("bypass", true);
-                    drawEqCurve(mScatter[i], true);
-                    mScatter[i]->setVisible(false);
-                }
-            }
-            mSoloScattrer = mSelectedScatter;
-            drawEqCurve(mSelectedScatter);
-        }
-        else
-        {
-            for (int i = 0; i < EqCount; i++)
-            {
-                if (mSelectedScatter != mScatter[i])
-                {
-                    mScatter[i]->setProperty("bypass", bypass[i]);
-                    drawEqCurve(mScatter[i], true);
-                    mScatter[i]->setVisible(true);
-                }
-            }
-            mSoloScattrer = nullptr;
-            drawEqCurve(mSelectedScatter);
-        }
-    });
-
-    QList<QString> typeStr{"Peak", "LowShelf", "HighShelf", "LowPass", "HighPass", "BandPass", "Notch", "AllPass"};
-    mFilterActionGroup = new QActionGroup(this);
-    mFilterActionGroup->setExclusive(true);
-
-    for (int i = 0; i < typeStr.count(); i++)
-    {
-        QAction *action = new QAction(typeStr[i], mFilterActionGroup);
-        action->setCheckable(true);
-        action->setProperty("type", i);
-    }
-    mFilterTypeMenu->addActions(mFilterActionGroup->actions());
-
-    connect(mFilterActionGroup, &QActionGroup::triggered, this, [=](QAction *action) {
-        int type = action->property("type").toInt();
-        mSelectedScatter->setProperty("type", type);
-        drawEqCurve(mSelectedScatter);
-    });
-
-    mEqParamText = new QCPItemText(this);
-    mEqParamText->position->setType(QCPItemPosition::ptPlotCoords);
-    mEqParamText->setPositionAlignment(Qt::AlignCenter);
-    mEqParamText->setPen(Qt::NoPen);
-    mEqParamText->setBrush(Qt::NoBrush);
-    mEqParamText->setColor(themeColor);
-    mEqParamText->setVisible(false);
-
-    QList<QString> selectedSvgPaths = {prefixStr+"hp_filled.svg", prefixStr+"1_filled.svg", prefixStr+"2_filled.svg",
-                                       prefixStr+"3_filled.svg",  prefixStr+"4_filled.svg", prefixStr+"5_filled.svg",
-                                       prefixStr+"6_filled.svg",  prefixStr+"7_filled.svg", prefixStr+"8_filled.svg",
-                                       prefixStr+"9_filled.svg",  prefixStr+"lp_filled.svg"};
-    QList<QString> unselectedSvgPaths = {prefixStr+"hp_regular.svg", prefixStr+"1_regular.svg", prefixStr+"2_regular.svg",
-                                         prefixStr+"3_regular.svg",  prefixStr+"4_regular.svg", prefixStr+"5_regular.svg",
-                                         prefixStr+"6_regular.svg",  prefixStr+"7_regular.svg", prefixStr+"8_regular.svg",
-                                         prefixStr+"9_regular.svg",  prefixStr+"lp_regular.svg"};
-
-    for (int i = 0; i < selectedSvgPaths.size(); i++)
-    {
-        mSelectedIcon.append(QIcon(selectedSvgPaths[i]));
-    }
-
-    for (int i = 0; i < unselectedSvgPaths.size(); i++)
-    {
-        mUnselectedIcon.append(QIcon(unselectedSvgPaths[i]));
-    }
-
-    this->xAxis2->setVisible(true);
-    this->xAxis2->setTickLabels(false);
-    auto xTicker = QSharedPointer<QCPAxisTickerFreq>::create();
-    QList<QCPAxis *> xAxes = {this->xAxis, this->xAxis2};
-    for (auto axis : xAxes)
-    {
-        axis->setTicker(xTicker);
-        axis->setScaleType(QCPAxis::stLogarithmic);
-        axis->setRange(MIN_XAXIS_VALUE, MAX_XAXIS_VALUE);
-    }
-
-    this->yAxis2->setVisible(true);
-    this->yAxis2->setTickLabels(false);
-    QMap<double, QString> ticks;
-    for (double i = MIN_YAXIS_VALUE; i <= MAX_YAXIS_VALUE; i += (MAX_YAXIS_VALUE - MIN_YAXIS_VALUE) / 6)
-    {
-        ticks.insert(i, QString::number(i, 'f', 0));
-    }
-    auto yTicker = QSharedPointer<QCPAxisTickerText>::create();
-    yTicker->addTicks(ticks);
-    yTicker->setSubTickCount(1);
-
-    QList<QCPAxis *> yAxes = {this->yAxis, this->yAxis2};
-    for (auto axis : yAxes)
-    {
-        axis->setTicker(yTicker);
-        axis->setRange(MIN_YAXIS_VALUE, MAX_YAXIS_VALUE);
-    }
-
-    QList<QCPAxis *> axes = {this->xAxis, this->xAxis2, this->yAxis, this->yAxis2};
-    for (auto axis : axes)
-    {
-        axis->setBasePen(QPen(QBrush(themeColor), 1));
-        axis->setTickPen(QPen(QBrush(themeColor), 1));
-        axis->setSubTickPen(QPen(QBrush(themeColor), 1));
-        axis->setTickLabelColor(QColor(themeColor));
-        axis->setTickLength(0, 0);
-        axis->setSubTickLength(0, 0);
-        axis->grid()->setPen(QPen(QBrush(themeColor), 1));
-        axis->grid()->setSubGridPen(QPen(QBrush(themeColor), 1));
-        axis->grid()->setSubGridVisible(true);
-        axis->grid()->setZeroLinePen(Qt::NoPen);
-    }
-
-    this->setBackground(QBrush(theme == Qt::ColorScheme::Dark ? QColor(Qt::black) : QColor(Qt::white)));
-    this->setInteractions(QCP::iSelectPlottables);
-    this->setAntialiasedElements(QCP::aeAll);
-
-    mFreqData.resize(FREQ_COUNT);
-    double xAxisLogStep = (qLn(MAX_XAXIS_VALUE) / M_LN10 - qLn(MIN_XAXIS_VALUE) / M_LN10) / FREQ_COUNT;
-    double freqLogStep = (qLn(MAX_FREQ) / M_LN10 - qLn(MIN_FREQ) / M_LN10) / (EqCount - 1);
-    for (int i = 0; i < FREQ_COUNT; i++)
-    {
-        mFreqData[i] = (MIN_XAXIS_VALUE * qPow(10, i * xAxisLogStep));
-    }
-
-    for (int i = 0; i < EqCount; i++)
-    {
-        QCPGraph *curve = this->addGraph(this->xAxis, this->yAxis);
-        QCPGraph *scatter = this->addGraph(this->xAxis, this->yAxis);
-
-        mScatter.append(scatter);
-        mScatterCurve.insert(scatter, curve);
-
-        curve->setPen(QPen(curvePenColor));
-        curve->setBrush(QBrush(curveBurshColor));
-        curve->setSelectable(QCP::stNone);
-
-        scatter->setProperty("defaultGain", DEFAULT_GAIN);
-        scatter->setProperty("defaultBypass", false);
-        scatter->setProperty("defaultFreq", (MIN_FREQ * qPow(10, i * freqLogStep)));
-        if (i == EqHp)
-        {
-            scatter->setProperty("defaultQ", DEFAULT_HIGHPASS_Q);
-            scatter->setProperty("defaultType", static_cast<int>(eq::FilterType::Highpass));
-        }
-        else if (i == EqLp)
-        {
-            scatter->setProperty("defaultQ", DEFAULT_LOWPASS_Q);
-            scatter->setProperty("defaultType", static_cast<int>(eq::FilterType::Lowpass));
-        }
-        else
-        {
-            scatter->setProperty("defaultQ", DEFAULT_Q);
-            scatter->setProperty("defaultType", static_cast<int>(eq::FilterType::Peak));
-        }
-
-        double gain = scatter->property("defaultGain").toDouble();
-        double q = scatter->property("defaultQ").toDouble();
-        int freq = scatter->property("defaultFreq").toInt();
-        int type = scatter->property("defaultType").toInt();
-        bool bypass = scatter->property("defaultBypass").toBool();
-
-        scatter->setProperty("gain", gain);
-        scatter->setProperty("q", q);
-        scatter->setProperty("freq", freq);
-        scatter->setProperty("type", type);
-        scatter->setProperty("bypass", bypass);
-
-        scatter->addData(freq, gain);
-        scatter->setLayer(QLatin1String("overlay"));
-
-        mOverallCoeff.append(
-            eq::getSectionsMatrix(gain, freq, q, static_cast<eq::FilterType>(type), bypass, SAMPLE_RATE));
-    }
-
-    mOverallCurve = this->addGraph(this->xAxis, this->yAxis);
-    QVector<double> hoverallH = eq::getFreqzn(mOverallCoeff, SAMPLE_RATE, mFreqData);
-    mOverallCurve->setData(mFreqData, hoverallH);
-    mOverallCurve->setPen(QPen(curvePenColor, 2));
-    mOverallCurve->setSelectable(QCP::stNone);
-
-    double yBottom = this->yAxis->range().lower;
-    QVector<double> bottomY(mFreqData.size(), yBottom);
-    QCPGraph *bottomGraph = this->addGraph(this->xAxis, this->yAxis);
-    bottomGraph->setData(mFreqData, bottomY);
-    bottomGraph->setPen(Qt::NoPen);
-    bottomGraph->setSelectable(QCP::stNone);
-
-    mScatterCurve[mScatter[EqHp]]->setChannelFillGraph(bottomGraph);
-    mScatterCurve[mScatter[EqLp]]->setChannelFillGraph(bottomGraph);
-
-    connect(this, &QCustomPlot::plottableClick, this,
-            [this](QCPAbstractPlottable *plottable, int dataIndex, QMouseEvent *event) {
-                if (event->type() == QEvent::MouseButtonPress &&
-                    (event->button() == Qt::LeftButton || event->button() == Qt::RightButton))
-                {
-                    QCPGraph *graph = qobject_cast<QCPGraph *>(plottable);
-                    if (graph == mOverallCurve)
-                        return;
-                    mSelectedScatter = graph;
-                    mMouseButton = event->button();
-                    mSelectedScatter->setScatterStyle(mSelectedStyle[mSelectedScatter]);
-                    mScatterCurve[mSelectedScatter]->setVisible(true);
-                    if (event->button() == Qt::LeftButton)
-                    {
-                        updateEqParamText(mSelectedScatter);
-                    }
-                    else if (event->button() == Qt::RightButton)
-                    {
-                        if ((mSoloAction->isChecked() && mSoloScattrer == mSelectedScatter) ||
-                            mSoloAction->isChecked() == false)
-                        {
-                            mBypassAction->setChecked(mSelectedScatter->property("bypass").toBool());
-                            int type = mSelectedScatter->property("type").toInt();
-                            mFilterActionGroup->actions().at(type)->setChecked(true);
-                            if (mSelectedScatter == mScatter[EqHp] || mSelectedScatter == mScatter[EqLp])
-                                mFilterTypeAction->setVisible(false);
-                            else
-                                mFilterTypeAction->setVisible(true);
-                            mMenu->exec(QCursor::pos());
-                        }
-                    }
-                }
-            });
-
-    connect(this, &QCustomPlot::plottableDoubleClick, this,
-            [this](QCPAbstractPlottable *plottable, int dataIndex, QMouseEvent *event) {
-                if (event->type() != QEvent::MouseButtonDblClick || event->button() != Qt::LeftButton)
-                    return;
-                QCPGraph *graph = qobject_cast<QCPGraph *>(plottable);
-
-                bool isChanged = false;
-
-                double defaultGain = graph->property("defaultGain").toDouble();
-                double defaultQ = graph->property("defaultQ").toDouble();
-                int defaultFreq = graph->property("defaultFreq").toInt();
-
-                double gain = graph->property("gain").toDouble();
-                double q = graph->property("q").toDouble();
-                int freq = graph->property("freq").toInt();
-
-                if (gain != defaultGain)
-                {
-                    isChanged = true;
-                    graph->setProperty("gain", defaultGain);
-                }
-
-                if (q != defaultQ)
-                {
-                    isChanged = true;
-                    graph->setProperty("q", defaultQ);
-                }
-
-                if (freq != defaultFreq)
-                {
-                    isChanged = true;
-                    graph->setProperty("freq", defaultFreq);
-                }
-
-                if (isChanged)
-                {
-                    drawEqCurve(graph);
-                }
-            });
-
-    connect(this, &QCustomPlot::mousePress, this, [this](QMouseEvent *event) {
-        for (int i = 0; i < EqCount; i++)
-        {
-            mScatter[i]->setScatterStyle(mUnselectedStyle[mScatter[i]]);
-            mScatterCurve[mScatter[i]]->setVisible(false);
-        }
-        mEqParamText->setVisible(false);
-        mSelectedScatter = nullptr;
-    });
-
-    connect(this, &QCustomPlot::mouseMove, this, [this](QMouseEvent *event) {
-        if (mMouseButton == Qt::LeftButton)
-        {
-            double newFreq = this->xAxis->pixelToCoord(event->pos().x());
-            double newGain = this->yAxis->pixelToCoord(event->pos().y());
-            if (newFreq < MIN_FREQ)
-                newFreq = MIN_FREQ;
-            if (newFreq > MAX_FREQ)
-                newFreq = MAX_FREQ;
-
-            if (newGain < MIN_GAIN)
-                newGain = MIN_GAIN;
-            if (newGain > MAX_GAIN)
-                newGain = MAX_GAIN;
-
-            bool isChanged = false;
-            double gain = mSelectedScatter->property("gain").toDouble();
-            int freq = mSelectedScatter->property("freq").toInt();
-
-            if (newFreq != freq)
-            {
-                isChanged = true;
-                mSelectedScatter->setProperty("freq", newFreq);
-            }
-
-            if (newGain != gain)
-            {
-                isChanged = true;
-                mSelectedScatter->setProperty("gain", newGain);
-            }
-
-            if (isChanged)
-            {
-                drawEqCurve(mSelectedScatter);
-            }
-        }
-    });
-    connect(this, &QCustomPlot::mouseRelease, this, [this](QMouseEvent *event) { mMouseButton = Qt::NoButton; });
-    connect(this, &QCustomPlot::mouseWheel, this, [this](QWheelEvent *event) {
-        if (this->selectedGraphs().count() <= 0)
-            return;
-        int step = 0;
-        if (!event->angleDelta().isNull())
-        {
-            step = event->angleDelta().y() > 0 ? 1 : -1;
-        }
-        else if (!event->pixelDelta().isNull())
-        {
-            step = event->pixelDelta().y() > 0 ? 1 : -1;
-        }
-
-        double curQ = mSelectedScatter->property("q").toDouble();
-        double newQ = curQ + step * Q_SINGLE_STEP;
-
-        if (newQ < MIN_Q)
-            newQ = MIN_Q;
-        if (newQ > MAX_Q)
-            newQ = MAX_Q;
-
-        if (curQ != newQ)
-        {
-            mSelectedScatter->setProperty("q", newQ);
-            drawEqCurve(mSelectedScatter);
-        }
-    });
+double clamped(double value, double lower, double upper)
+{
+    return std::min(std::max(value, lower), upper);
 }
 
-EqCustomPlot::~EqCustomPlot()
+bool fuzzySame(double a, double b)
 {
+    return std::abs(a - b) <= 1e-9;
 }
 
-void EqCustomPlot::drawEqCurve(QCPGraph *scatter, bool solo)
+bool sameBand(const EqCustomPlot::Band &lhs, const EqCustomPlot::Band &rhs)
 {
-    if (scatter == nullptr)
-        return;
-    double gain = scatter->property("gain").toDouble();
-    double q = scatter->property("q").toDouble();
-    int freq = scatter->property("freq").toInt();
-    int type = scatter->property("type").toInt();
-    bool bypass = scatter->property("bypass").toBool();
+    return lhs.frequencyHz == rhs.frequencyHz && fuzzySame(lhs.gainDb, rhs.gainDb) && fuzzySame(lhs.q, rhs.q) &&
+           lhs.type == rhs.type && lhs.bypass == rhs.bypass;
+}
 
-    eq::Coeff coeff = eq::getSectionsMatrix(gain, freq, q, static_cast<eq::FilterType>(type), bypass, SAMPLE_RATE);
-    QVector<double> h = eq::getFreqzn(coeff, SAMPLE_RATE, mFreqData);
-    mScatterCurve[scatter]->setData(mFreqData, h);
+QVector<double> makeLogFrequencies(int count)
+{
+    QVector<double> result;
+    result.resize(count);
 
-    QVector<double> key(1, freq), value(1, gain);
-    scatter->setData(key, value);
-    int index = mScatter.indexOf(scatter);
-    mOverallCoeff[index] = eq::getSectionsMatrix(gain, freq, q, static_cast<eq::FilterType>(type), bypass, SAMPLE_RATE);
-    QVector<double> overallH = eq::getFreqzn(mOverallCoeff, SAMPLE_RATE, mFreqData);
-    mOverallCurve->setData(mFreqData, overallH);
+    const double step = (kAxisMaxLog - kAxisMinLog) / static_cast<double>(count - 1);
+    for (int i = 0; i < count; ++i)
+        result[i] = kLocalMinAxisFrequency * std::pow(10.0, step * i);
 
-    for (int i = 0; i < EqCount; i++)
+    return result;
+}
+
+QString formatFrequency(int frequencyHz)
+{
+    if (frequencyHz >= 1000)
     {
-        mScatter[i]->setScatterStyle(mUnselectedStyle[mScatter[i]]);
-        mScatterCurve[mScatter[i]]->setVisible(false);
+        const double khz = frequencyHz / 1000.0;
+        return QStringLiteral("%1k").arg(khz, 0, khz >= 10.0 || std::fmod(khz, 1.0) == 0.0 ? 'f' : 'f',
+                                        khz >= 10.0 || std::fmod(khz, 1.0) == 0.0 ? 0 : 1);
     }
-
-    scatter->setScatterStyle(mSelectedStyle[scatter]);
-    mScatterCurve[scatter]->setVisible(true);
-    if (solo == false)
-        updateEqParamText(scatter);
-
-    this->replot();
+    return QStringLiteral("%1").arg(frequencyHz);
 }
 
-void EqCustomPlot::updateEqParamText(QCPGraph *scatter)
+QString iconStemForBand(int index)
 {
-    if (scatter == nullptr)
+    if (index == EqCustomPlot::EqHp)
+        return QStringLiteral("hp");
+    if (index == EqCustomPlot::EqLp)
+        return QStringLiteral("lp");
+    return QString::number(index);
+}
+} // namespace
+
+EqCustomPlot::EqCustomPlot(QWidget *parent) : QWidget(parent)
+{
+    qRegisterMetaType<EqCustomPlot::Band>("EqCustomPlot::Band");
+
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    setAttribute(Qt::WA_AcceptTouchEvents);
+    setFocusPolicy(Qt::StrongFocus);
+    setMouseTracking(true);
+
+    initializeBands();
+    initializeFrequencyData();
+    refreshTheme();
+    rebuildLayout();
+}
+
+EqCustomPlot::~EqCustomPlot() = default;
+
+EqCustomPlot::Band EqCustomPlot::band(int index) const
+{
+    if (!isValidBand(index))
+        return Band();
+    return mBandStates[index].value;
+}
+
+QVector<EqCustomPlot::Band> EqCustomPlot::bands() const
+{
+    QVector<Band> result;
+    result.reserve(BandCount);
+    for (const BandState &state : mBandStates)
+        result.push_back(state.value);
+    return result;
+}
+
+int EqCustomPlot::selectedBand() const
+{
+    return mSelectedIndex;
+}
+
+QSize EqCustomPlot::sizeHint() const
+{
+    return QSize(900, 560);
+}
+
+QSize EqCustomPlot::minimumSizeHint() const
+{
+    return QSize(480, 340);
+}
+
+void EqCustomPlot::setBand(int index, const Band &band)
+{
+    if (!isValidBand(index))
         return;
 
-    int freq = scatter->property("freq").toInt();
-    double gain = scatter->property("gain").toDouble();
-    double q = scatter->property("q").toDouble();
+    const Band normalized = normalizedBand(index, band);
+    BandState &state = mBandStates[index];
+    if (sameBand(state.value, normalized))
+        return;
 
-    mEqParamText->setText(QString("F:%1Hz\nG:%2dB\nQ:%3").arg(freq).arg(gain, 0, 'f', 1).arg(q, 0, 'f', 1));
+    state.value = normalized;
+    state.dirty = true;
+    mPathDirty = true;
 
-    QFontMetrics fm(mEqParamText->font());
-    QRect rect = fm.boundingRect(QRect(), Qt::TextWordWrap, mEqParamText->text());
+    emit bandChanged(index, state.value);
+    emit bandsChanged();
+    requestFrame();
+}
 
-    double gainHeight =
-        this->yAxis->pixelToCoord(0) - this->yAxis->pixelToCoord(rect.height() + this->selectionTolerance() * 2);
+void EqCustomPlot::setBands(const QVector<Band> &bands)
+{
+    bool anyChanged = false;
+    const int count = std::min(static_cast<int>(BandCount), static_cast<int>(bands.size()));
 
-    QPointF textPos = gain > 0 ? QPointF(freq, gain - gainHeight / 2) : QPointF(freq, gain + gainHeight / 2);
-    mEqParamText->position->setCoords(textPos);
-    mEqParamText->setVisible(true);
+    for (int i = 0; i < count; ++i)
+    {
+        const Band normalized = normalizedBand(i, bands.at(i));
+        BandState &state = mBandStates[i];
+        if (sameBand(state.value, normalized))
+            continue;
+
+        state.value = normalized;
+        state.dirty = true;
+        anyChanged = true;
+        emit bandChanged(i, state.value);
+    }
+
+    if (!anyChanged)
+        return;
+
+    mPathDirty = true;
+    emit bandsChanged();
+    requestFrame(true);
+}
+
+void EqCustomPlot::resetBand(int index)
+{
+    if (!isValidBand(index))
+        return;
+    setBand(index, mBandStates[index].defaults);
+}
+
+void EqCustomPlot::resetAll()
+{
+    bool anyChanged = false;
+
+    for (int i = 0; i < BandCount; ++i)
+    {
+        BandState &state = mBandStates[i];
+        if (sameBand(state.value, state.defaults))
+            continue;
+
+        state.value = state.defaults;
+        state.dirty = true;
+        anyChanged = true;
+        emit bandChanged(i, state.value);
+    }
+
+    if (!anyChanged)
+        return;
+
+    mSoloIndex = InvalidBand;
+    mPathDirty = true;
+    emit bandsChanged();
+    requestFrame(true);
+}
+
+void EqCustomPlot::setSelectedBand(int index)
+{
+    const int normalizedIndex = isValidBand(index) ? index : InvalidBand;
+    if (mSelectedIndex == normalizedIndex)
+        return;
+
+    mSelectedIndex = normalizedIndex;
+    mPathDirty = true;
+    emit selectedBandChanged(mSelectedIndex);
+    requestFrame();
+}
+
+bool EqCustomPlot::event(QEvent *event)
+{
+    switch (event->type())
+    {
+    case QEvent::ApplicationPaletteChange:
+    case QEvent::PaletteChange:
+    case QEvent::StyleChange:
+        refreshTheme();
+        return QWidget::event(event);
+    case QEvent::TouchBegin:
+    {
+        auto *touch = static_cast<QTouchEvent *>(event);
+        if (!touch->points().isEmpty())
+        {
+            event->accept();
+            beginInteraction(touch->points().first().position());
+            return true;
+        }
+        break;
+    }
+    case QEvent::TouchUpdate:
+    {
+        auto *touch = static_cast<QTouchEvent *>(event);
+        if (!touch->points().isEmpty())
+        {
+            event->accept();
+            updateInteraction(touch->points().first().position());
+            return true;
+        }
+        break;
+    }
+    case QEvent::TouchEnd:
+    case QEvent::TouchCancel:
+        event->accept();
+        finishInteraction();
+        return true;
+    default:
+        break;
+    }
+
+    return QWidget::event(event);
+}
+
+void EqCustomPlot::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event);
+
+    ensureResponses();
+    if (mPathDirty)
+        rebuildPaths();
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+
+    drawBackground(painter);
+    drawCurves(painter);
+    drawHandles(painter);
+    drawPanel(painter);
 }
 
 void EqCustomPlot::resizeEvent(QResizeEvent *event)
 {
-    QCustomPlot::resizeEvent(event);
-    int width = this->width() / 25;
-    int height = this->height() / 25;
-    QSize scatterSize = width > height ? QSize(height, height) : QSize(width, width);
-    mEqParamText->setFont(QFont(this->font().family(), scatterSize.height() / 2));
-    this->setSelectionTolerance(scatterSize.width() / 2);
-    int index = mScatter.indexOf(mSelectedScatter);
-    qreal dpr = devicePixelRatio();
+    QWidget::resizeEvent(event);
+    rebuildLayout();
+    rebuildIconCache();
+    invalidateBackground();
+    mPathDirty = true;
+    requestFrame(true);
+}
 
-    mSelectedStyle.clear();
-    mUnselectedStyle.clear();
-
-    for (int i = 0; i < EqCount; i++)
+void EqCustomPlot::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton)
     {
-        QPixmap selectedPixmap = mSelectedIcon[i].pixmap(mSelectedIcon[i].actualSize(scatterSize));
-        QPixmap unselectedPixmap = mUnselectedIcon[i].pixmap(mUnselectedIcon[i].actualSize(scatterSize));
-        selectedPixmap.setDevicePixelRatio(dpr);
-        unselectedPixmap.setDevicePixelRatio(dpr);
-        QCPScatterStyle selectedStyle(selectedPixmap);
-        QCPScatterStyle unselectedStyle(unselectedPixmap);
+        QWidget::mousePressEvent(event);
+        return;
+    }
 
-        mSelectedStyle.insert(mScatter[i], selectedStyle);
-        mUnselectedStyle.insert(mScatter[i], unselectedStyle);
-        if (index == i)
+    if (!beginInteraction(event->position()))
+        setSelectedBand(InvalidBand);
+
+    event->accept();
+}
+
+void EqCustomPlot::mouseMoveEvent(QMouseEvent *event)
+{
+    updateInteraction(event->position());
+    event->accept();
+}
+
+void EqCustomPlot::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+    {
+        finishInteraction();
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseReleaseEvent(event);
+}
+
+void EqCustomPlot::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    const int hit = hitBandHandle(event->position());
+    if (isValidBand(hit))
+    {
+        setSelectedBand(hit);
+        resetBand(hit);
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void EqCustomPlot::initializeBands()
+{
+    const double step = (kBandMaxLog - kBandMinLog) / static_cast<double>(BandCount - 1);
+
+    for (int i = 0; i < BandCount; ++i)
+    {
+        Band band;
+        band.frequencyHz = static_cast<int>(std::lround(kMinBandFrequency * std::pow(10.0, step * i)));
+        band.gainDb = 0.0;
+        band.q = kDefaultQ;
+        band.type = eq::FilterType::Peak;
+        band.bypass = false;
+
+        if (i == EqHp)
         {
-            mScatter[i]->setScatterStyle(mSelectedStyle[mScatter[i]]);
-            updateEqParamText(mSelectedScatter);
+            band.frequencyHz = kMinBandFrequency;
+            band.q = kDefaultPassQ;
+            band.type = eq::FilterType::Highpass;
+        }
+        else if (i == EqLp)
+        {
+            band.frequencyHz = kMaxBandFrequency;
+            band.q = kDefaultPassQ;
+            band.type = eq::FilterType::Lowpass;
+        }
+
+        band = normalizedBand(i, band);
+        mBandStates[i].value = band;
+        mBandStates[i].defaults = band;
+        mBandStates[i].dirty = true;
+    }
+
+    mSelectedIndex = Eq1;
+}
+
+void EqCustomPlot::initializeFrequencyData()
+{
+    mFineFrequencies = makeLogFrequencies(kFinePointCount);
+    mLiveFrequencies = makeLogFrequencies(kLivePointCount);
+    mFineGrid = eq::makeFrequencyGrid(kSampleRate, mFineFrequencies);
+    mLiveGrid = eq::makeFrequencyGrid(kSampleRate, mLiveFrequencies);
+}
+
+void EqCustomPlot::refreshTheme()
+{
+    const bool dark = QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+    const QPalette pal = palette();
+
+    mBackgroundColor = dark ? QColor(9, 11, 13) : QColor(250, 251, 252);
+    mPanelColor = dark ? QColor(24, 27, 31) : QColor(238, 241, 245);
+    mTextColor = pal.color(QPalette::WindowText);
+    mMutedTextColor = mTextColor;
+    mMutedTextColor.setAlpha(150);
+    mGridColor = mTextColor;
+    mGridColor.setAlpha(dark ? 54 : 46);
+    mSubGridColor = mTextColor;
+    mSubGridColor.setAlpha(dark ? 26 : 22);
+    mAccentColor = pal.color(QPalette::Accent);
+    mAccentFillColor = mAccentColor;
+    mAccentFillColor.setAlpha(45);
+    mDisabledColor = mTextColor;
+    mDisabledColor.setAlpha(70);
+
+    rebuildIconCache();
+    invalidateBackground();
+    requestFrame(true);
+}
+
+void EqCustomPlot::rebuildIconCache()
+{
+    if (mHandleSize <= 0)
+        return;
+
+    const bool dark = QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+    const QString prefix = dark ? QStringLiteral(":/image/dark/") : QStringLiteral(":/image/light/");
+    const QSize iconSize(mHandleSize, mHandleSize);
+
+    for (int i = 0; i < BandCount; ++i)
+    {
+        const QString stem = iconStemForBand(i);
+        mBandStates[i].selectedIcon = QIcon(prefix + stem + QStringLiteral("_filled.svg")).pixmap(iconSize);
+        mBandStates[i].unselectedIcon = QIcon(prefix + stem + QStringLiteral("_regular.svg")).pixmap(iconSize);
+    }
+}
+
+void EqCustomPlot::rebuildLayout()
+{
+    const qreal w = width();
+    const qreal h = height();
+    if (w <= 0 || h <= 0)
+        return;
+
+    const qreal panelHeight = clamped(h * 0.33, 170.0, 214.0);
+    mPanelRect = QRectF(0.0, h - panelHeight, w, panelHeight);
+
+    const qreal left = clamped(w * 0.07, 50.0, 68.0);
+    const qreal right = 18.0;
+    const qreal top = 18.0;
+    const qreal bottomGap = 14.0;
+    mPlotRect = QRectF(left, top, std::max(80.0, w - left - right),
+                       std::max(90.0, mPanelRect.top() - top - bottomGap));
+
+    mHandleSize = static_cast<int>(clamped(std::min(w, h) / 15.0, 30.0, 48.0));
+
+    const qreal padding = 12.0;
+    const qreal sliderHeight = 30.0;
+    const qreal rowGap = 8.0;
+    const qreal labelWidth = 86.0;
+    const qreal valueWidth = 92.0;
+    const qreal panelWidth = std::max(0.0, mPanelRect.width() - padding * 2.0);
+    qreal y = mPanelRect.top() + padding;
+
+    auto setupSlider = [&](SliderGeometry &slider, const QString &label) {
+        slider.bounds = QRectF(padding, y, panelWidth, sliderHeight);
+        slider.label = label;
+        const qreal grooveLeft = slider.bounds.left() + labelWidth;
+        const qreal grooveRight = slider.bounds.right() - valueWidth;
+        slider.groove = QRectF(grooveLeft, slider.bounds.center().y() - 5.0, std::max(40.0, grooveRight - grooveLeft),
+                               10.0);
+        slider.handle = QRectF();
+        y += sliderHeight + rowGap;
+    };
+
+    setupSlider(mFrequencySlider, QStringLiteral("Freq"));
+    setupSlider(mGainSlider, QStringLiteral("Gain"));
+    setupSlider(mQSlider, QStringLiteral("Q"));
+
+    const qreal buttonHeight = 38.0;
+    const qreal buttonGap = 8.0;
+    const qreal smallButtonWidth = clamped((panelWidth - buttonGap * 5.0) * 0.14, 76.0, 102.0);
+    qreal x = padding;
+    mBypassButtonRect = QRectF(x, y, smallButtonWidth, buttonHeight);
+    x += smallButtonWidth + buttonGap;
+    mSoloButtonRect = QRectF(x, y, smallButtonWidth, buttonHeight);
+    x += smallButtonWidth + buttonGap;
+    mResetButtonRect = QRectF(x, y, smallButtonWidth, buttonHeight);
+    x += smallButtonWidth + buttonGap;
+
+    const QRectF typeArea(x, y, std::max(0.0, mPanelRect.right() - padding - x), buttonHeight);
+    mTypeChipRects.clear();
+    mTypeChipTypes.clear();
+    mTypeButtonRect = QRectF();
+
+    const QVector<eq::FilterType> types = editableTypes();
+    const qreal chipGap = 6.0;
+    const qreal chipWidth = types.isEmpty() ? 0.0 : (typeArea.width() - chipGap * (types.size() - 1)) / types.size();
+    if (chipWidth >= 66.0)
+    {
+        qreal chipX = typeArea.left();
+        for (eq::FilterType type : types)
+        {
+            mTypeChipRects.push_back(QRectF(chipX, typeArea.top(), chipWidth, typeArea.height()));
+            mTypeChipTypes.push_back(type);
+            chipX += chipWidth + chipGap;
+        }
+    }
+    else
+    {
+        mTypeButtonRect = typeArea;
+    }
+}
+
+void EqCustomPlot::invalidateBackground()
+{
+    mBackgroundDirty = true;
+    mBackgroundCache = QPixmap();
+}
+
+void EqCustomPlot::invalidateResponses(bool allBands)
+{
+    if (allBands)
+    {
+        for (BandState &state : mBandStates)
+            state.dirty = true;
+    }
+
+    mPathDirty = true;
+}
+
+void EqCustomPlot::ensureResponses()
+{
+    const eq::FrequencyGrid &grid = activeGrid();
+    const int pointCount = grid.size();
+    if (pointCount <= 0)
+        return;
+
+    if (mOverallDb.size() != pointCount)
+        mOverallDb.resize(pointCount);
+    std::fill(mOverallDb.begin(), mOverallDb.end(), 0.0);
+
+    for (int i = 0; i < BandCount; ++i)
+    {
+        BandState &state = mBandStates[i];
+        if (state.dirty || state.responseDb.size() != pointCount)
+        {
+            const Band &band = state.value;
+            state.coeff = eq::getSectionsMatrix(band.gainDb, band.frequencyHz, band.q, band.type, band.bypass,
+                                                kSampleRate);
+            eq::getFreqznFast(state.coeff, grid, state.responseDb);
+            state.dirty = false;
+        }
+
+        if (mSoloIndex != InvalidBand && mSoloIndex != i)
+            continue;
+
+        for (int j = 0; j < pointCount; ++j)
+            mOverallDb[j] += state.responseDb.at(j);
+    }
+}
+
+void EqCustomPlot::rebuildPaths()
+{
+    const QVector<double> &frequencies = activeFrequencies();
+    const int pointCount = std::min(frequencies.size(), mOverallDb.size());
+
+    auto buildPath = [&](const QVector<double> &values) {
+        QPainterPath path;
+        const int count = std::min(frequencies.size(), values.size());
+        for (int i = 0; i < count; ++i)
+        {
+            const QPointF point(xForFrequency(frequencies.at(i)), yForGain(clampDisplayDb(values.at(i))));
+            if (i == 0)
+                path.moveTo(point);
+            else
+                path.lineTo(point);
+        }
+        return path;
+    };
+
+    mOverallPath = pointCount > 0 ? buildPath(mOverallDb) : QPainterPath();
+    mSelectedPath = isValidBand(mSelectedIndex) ? buildPath(mBandStates[mSelectedIndex].responseDb) : QPainterPath();
+    mPathDirty = false;
+}
+
+void EqCustomPlot::requestFrame(bool finalFrame)
+{
+    if (finalFrame)
+    {
+        update();
+        mFrameTimer.restart();
+        return;
+    }
+
+    if (!mFrameTimer.isValid() || mFrameTimer.elapsed() >= kFrameIntervalMs)
+    {
+        update();
+        mFrameTimer.restart();
+    }
+}
+
+void EqCustomPlot::drawBackground(QPainter &painter)
+{
+    const QSize cacheSize = size();
+    const qreal dpr = devicePixelRatioF();
+    if (mBackgroundDirty || mBackgroundCacheSize != cacheSize || mBackgroundCache.isNull())
+    {
+        mBackgroundCacheSize = cacheSize;
+        mBackgroundCache = QPixmap(cacheSize * dpr);
+        mBackgroundCache.setDevicePixelRatio(dpr);
+        mBackgroundCache.fill(mBackgroundColor);
+
+        QPainter cachePainter(&mBackgroundCache);
+        cachePainter.setRenderHint(QPainter::Antialiasing, false);
+        cachePainter.fillRect(rect(), mBackgroundColor);
+        cachePainter.fillRect(mPanelRect, mPanelColor);
+
+        cachePainter.setPen(QPen(mSubGridColor, 1.0));
+        for (int decade = 1; decade <= 4; ++decade)
+        {
+            const double base = std::pow(10.0, decade);
+            for (int m = 2; m < 10; ++m)
+            {
+                const double f = base * m;
+                if (f < kMinAxisFrequency || f > kMaxAxisFrequency)
+                    continue;
+                const qreal x = xForFrequency(f);
+                cachePainter.drawLine(QPointF(x, mPlotRect.top()), QPointF(x, mPlotRect.bottom()));
+            }
+        }
+
+        cachePainter.setPen(QPen(mGridColor, 1.0));
+        const QVector<int> majorFrequencies = {20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000};
+        for (int frequency : majorFrequencies)
+        {
+            const qreal x = xForFrequency(frequency);
+            cachePainter.drawLine(QPointF(x, mPlotRect.top()), QPointF(x, mPlotRect.bottom()));
+        }
+
+        for (double gain = kMinGainDb; gain <= kMaxGainDb + 0.1; gain += 6.0)
+        {
+            const qreal y = yForGain(gain);
+            cachePainter.drawLine(QPointF(mPlotRect.left(), y), QPointF(mPlotRect.right(), y));
+        }
+
+        cachePainter.setPen(QPen(mTextColor, 1.0));
+        cachePainter.drawRect(mPlotRect);
+
+        QFont labelFont = font();
+        labelFont.setPointSizeF(std::max(8.0, labelFont.pointSizeF() - 1.0));
+        cachePainter.setFont(labelFont);
+        cachePainter.setPen(mMutedTextColor);
+        for (int frequency : majorFrequencies)
+        {
+            const qreal x = xForFrequency(frequency);
+            const QString label = formatFrequency(frequency);
+            cachePainter.drawText(QRectF(x - 30.0, mPlotRect.bottom() + 4.0, 60.0, 18.0), Qt::AlignHCenter,
+                                  label);
+        }
+
+        for (double gain = kMinGainDb; gain <= kMaxGainDb + 0.1; gain += 6.0)
+        {
+            const qreal y = yForGain(gain);
+            cachePainter.drawText(QRectF(4.0, y - 9.0, mPlotRect.left() - 10.0, 18.0), Qt::AlignRight | Qt::AlignVCenter,
+                                  QStringLiteral("%1").arg(gain, 0, 'f', 0));
+        }
+
+        mBackgroundDirty = false;
+    }
+
+    painter.drawPixmap(0, 0, mBackgroundCache);
+}
+
+void EqCustomPlot::drawCurves(QPainter &painter)
+{
+    painter.save();
+    painter.setClipRect(mPlotRect.adjusted(1.0, 1.0, -1.0, -1.0));
+
+    if (isValidBand(mSelectedIndex) && !mSelectedPath.isEmpty())
+    {
+        QColor selectedCurve = mAccentColor;
+        selectedCurve.setAlpha(95);
+        painter.setPen(QPen(selectedCurve, 1.4));
+        painter.drawPath(mSelectedPath);
+    }
+
+    painter.setPen(QPen(mAccentColor, 2.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.drawPath(mOverallPath);
+    painter.restore();
+}
+
+void EqCustomPlot::drawHandles(QPainter &painter)
+{
+    painter.save();
+    painter.setClipRect(mPlotRect.adjusted(-mHandleSize, -mHandleSize, mHandleSize, mHandleSize));
+
+    for (int i = 0; i < BandCount; ++i)
+    {
+        const bool selected = i == mSelectedIndex;
+        const bool mutedBySolo = mSoloIndex != InvalidBand && mSoloIndex != i;
+        const bool bypassed = mBandStates[i].value.bypass;
+        const QPointF center = bandPoint(i);
+        const qreal size = selected ? mHandleSize * 1.12 : mHandleSize;
+        const QRectF target(center.x() - size / 2.0, center.y() - size / 2.0, size, size);
+
+        painter.save();
+        painter.setOpacity(mutedBySolo ? 0.32 : (bypassed ? 0.45 : 1.0));
+
+        const QPixmap &pixmap = selected ? mBandStates[i].selectedIcon : mBandStates[i].unselectedIcon;
+        if (!pixmap.isNull())
+        {
+            const qreal dpr = pixmap.devicePixelRatio();
+            const QRectF source(0.0, 0.0, pixmap.width() / dpr, pixmap.height() / dpr);
+            painter.drawPixmap(target, pixmap, source);
         }
         else
         {
-            mScatter[i]->setScatterStyle(mUnselectedStyle[mScatter[i]]);
+            painter.setBrush(selected ? mAccentColor : mPanelColor);
+            painter.setPen(QPen(selected ? mAccentColor : mTextColor, 1.5));
+            painter.drawEllipse(target);
+            painter.setPen(selected ? mBackgroundColor : mTextColor);
+            painter.drawText(target, Qt::AlignCenter, bandLabel(i));
+        }
+
+        painter.restore();
+    }
+
+    painter.restore();
+}
+
+void EqCustomPlot::drawPanel(QPainter &painter)
+{
+    painter.save();
+
+    const bool hasSelection = isValidBand(mSelectedIndex);
+    const Band current = hasSelection ? mBandStates[mSelectedIndex].value : Band();
+    const bool gainEnabled = hasSelection && !isPassBand(mSelectedIndex);
+    const bool typeEnabled = hasSelection && !isPassBand(mSelectedIndex);
+
+    mFrequencySlider.enabled = hasSelection;
+    mFrequencySlider.value = hasSelection ? QStringLiteral("%1 Hz").arg(current.frequencyHz) : QStringLiteral("--");
+    mGainSlider.enabled = gainEnabled;
+    mGainSlider.value = hasSelection ? QStringLiteral("%1 dB").arg(current.gainDb, 0, 'f', 1) : QStringLiteral("--");
+    mQSlider.enabled = hasSelection;
+    mQSlider.value = hasSelection ? QStringLiteral("%1").arg(current.q, 0, 'f', 1) : QStringLiteral("--");
+
+    drawSlider(painter, mFrequencySlider, hasSelection ? sliderTForFrequency(current.frequencyHz) : 0.0);
+    drawSlider(painter, mGainSlider, hasSelection ? (current.gainDb - kMinGainDb) / (kMaxGainDb - kMinGainDb) : 0.5);
+    drawSlider(painter, mQSlider, hasSelection ? sliderTForQ(current.q) : 0.0);
+
+    drawButton(painter, mBypassButtonRect, QStringLiteral("Bypass"), hasSelection && current.bypass, hasSelection);
+    drawButton(painter, mSoloButtonRect, QStringLiteral("Solo"), hasSelection && mSoloIndex == mSelectedIndex,
+               hasSelection);
+    drawButton(painter, mResetButtonRect, QStringLiteral("Reset"), false, hasSelection);
+
+    if (!mTypeChipRects.isEmpty())
+    {
+        for (int i = 0; i < mTypeChipRects.size(); ++i)
+        {
+            const eq::FilterType type = mTypeChipTypes.at(i);
+            drawButton(painter, mTypeChipRects.at(i), typeLabel(type), hasSelection && current.type == type,
+                       typeEnabled);
+        }
+    }
+    else if (!mTypeButtonRect.isNull())
+    {
+        const QString text = hasSelection ? QStringLiteral("Type: %1").arg(typeLabel(current.type))
+                                          : QStringLiteral("Type");
+        drawButton(painter, mTypeButtonRect, text, false, typeEnabled);
+    }
+
+    if (hasSelection)
+    {
+        QFont infoFont = font();
+        infoFont.setBold(true);
+        painter.setFont(infoFont);
+        painter.setPen(mTextColor);
+        const QRectF infoRect(mPanelRect.left() + 12.0, mPanelRect.top() - 28.0, mPanelRect.width() - 24.0, 22.0);
+        const QString bypassText = current.bypass ? QStringLiteral("  Bypassed") : QString();
+        const QString soloText = mSoloIndex == mSelectedIndex ? QStringLiteral("  Solo") : QString();
+        painter.drawText(infoRect, Qt::AlignLeft | Qt::AlignVCenter,
+                         QStringLiteral("%1  %2 Hz  %3 dB  Q %4%5%6")
+                             .arg(bandLabel(mSelectedIndex))
+                             .arg(current.frequencyHz)
+                             .arg(current.gainDb, 0, 'f', 1)
+                             .arg(current.q, 0, 'f', 1)
+                             .arg(bypassText, soloText));
+    }
+
+    painter.restore();
+}
+
+void EqCustomPlot::drawSlider(QPainter &painter, const SliderGeometry &slider, double t)
+{
+    painter.save();
+
+    const double clampedT = clamped(t, 0.0, 1.0);
+    const QColor textColor = slider.enabled ? mTextColor : mDisabledColor;
+    const QColor trackColor = slider.enabled ? mMutedTextColor : mDisabledColor;
+    QColor fillColor = slider.enabled ? mAccentColor : mDisabledColor;
+    fillColor.setAlpha(slider.enabled ? 210 : 80);
+
+    painter.setPen(textColor);
+    painter.drawText(QRectF(slider.bounds.left(), slider.bounds.top(), 78.0, slider.bounds.height()),
+                     Qt::AlignLeft | Qt::AlignVCenter, slider.label);
+    painter.drawText(QRectF(slider.bounds.right() - 88.0, slider.bounds.top(), 88.0, slider.bounds.height()),
+                     Qt::AlignRight | Qt::AlignVCenter, slider.value);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(trackColor);
+    painter.drawRoundedRect(slider.groove, 5.0, 5.0);
+
+    QRectF fill = slider.groove;
+    fill.setWidth(slider.groove.width() * clampedT);
+    painter.setBrush(fillColor);
+    painter.drawRoundedRect(fill, 5.0, 5.0);
+
+    const qreal handleDiameter = 24.0;
+    const QPointF center(slider.groove.left() + slider.groove.width() * clampedT, slider.groove.center().y());
+    QRectF handle(center.x() - handleDiameter / 2.0, center.y() - handleDiameter / 2.0, handleDiameter,
+                  handleDiameter);
+    painter.setBrush(slider.enabled ? mAccentColor : mPanelColor);
+    painter.setPen(QPen(slider.enabled ? mBackgroundColor : mDisabledColor, 2.0));
+    painter.drawEllipse(handle);
+
+    painter.restore();
+}
+
+void EqCustomPlot::drawButton(QPainter &painter, const QRectF &rect, const QString &text, bool checked, bool enabled)
+{
+    if (rect.isNull() || rect.width() <= 0.0 || rect.height() <= 0.0)
+        return;
+
+    painter.save();
+
+    QColor fill = checked ? mAccentColor : mBackgroundColor;
+    QColor pen = checked ? mAccentColor : mMutedTextColor;
+    QColor textColor = checked ? mBackgroundColor : mTextColor;
+
+    if (!enabled)
+    {
+        fill = mPanelColor;
+        pen = mDisabledColor;
+        textColor = mDisabledColor;
+    }
+
+    painter.setPen(QPen(pen, 1.2));
+    painter.setBrush(fill);
+    painter.drawRoundedRect(rect, 8.0, 8.0);
+    painter.setPen(textColor);
+    painter.drawText(rect.adjusted(4.0, 0.0, -4.0, 0.0), Qt::AlignCenter, text);
+
+    painter.restore();
+}
+
+bool EqCustomPlot::beginInteraction(const QPointF &pos)
+{
+    if (handlePanelPress(pos))
+        return true;
+
+    const int hit = hitBandHandle(pos);
+    if (isValidBand(hit))
+    {
+        setSelectedBand(hit);
+        mDragTarget = DragTarget::BandHandle;
+        mUsingLiveGrid = true;
+        mEditing = true;
+        invalidateResponses(true);
+        emit editStarted(hit);
+        updateInteraction(pos);
+        return true;
+    }
+
+    return false;
+}
+
+void EqCustomPlot::updateInteraction(const QPointF &pos)
+{
+    if (mDragTarget == DragTarget::None || !isValidBand(mSelectedIndex))
+        return;
+
+    if (mDragTarget == DragTarget::BandHandle)
+    {
+        Band next = mBandStates[mSelectedIndex].value;
+        next.frequencyHz = frequencyForX(pos.x());
+        if (!isPassBand(mSelectedIndex))
+            next.gainDb = gainForY(pos.y());
+        setBand(mSelectedIndex, next);
+        return;
+    }
+
+    updateSliderFromPosition(mDragTarget, pos);
+}
+
+void EqCustomPlot::finishInteraction()
+{
+    if (mEditing && isValidBand(mSelectedIndex))
+        emit editFinished(mSelectedIndex);
+
+    mDragTarget = DragTarget::None;
+    mEditing = false;
+    if (mUsingLiveGrid)
+    {
+        mUsingLiveGrid = false;
+        mPathDirty = true;
+    }
+    requestFrame(true);
+}
+
+bool EqCustomPlot::handlePanelPress(const QPointF &pos)
+{
+    if (!mPanelRect.contains(pos) || !isValidBand(mSelectedIndex))
+        return false;
+
+    Band current = mBandStates[mSelectedIndex].value;
+
+    if (mBypassButtonRect.contains(pos))
+    {
+        current.bypass = !current.bypass;
+        setBand(mSelectedIndex, current);
+        return true;
+    }
+
+    if (mSoloButtonRect.contains(pos))
+    {
+        mSoloIndex = mSoloIndex == mSelectedIndex ? InvalidBand : mSelectedIndex;
+        mPathDirty = true;
+        requestFrame(true);
+        return true;
+    }
+
+    if (mResetButtonRect.contains(pos))
+    {
+        resetBand(mSelectedIndex);
+        return true;
+    }
+
+    if (!isPassBand(mSelectedIndex))
+    {
+        for (int i = 0; i < mTypeChipRects.size(); ++i)
+        {
+            if (!mTypeChipRects.at(i).contains(pos))
+                continue;
+            current.type = mTypeChipTypes.at(i);
+            setBand(mSelectedIndex, current);
+            return true;
+        }
+
+        if (!mTypeButtonRect.isNull() && mTypeButtonRect.contains(pos))
+        {
+            const QVector<eq::FilterType> types = editableTypes();
+            int nextIndex = 0;
+            for (int i = 0; i < types.size(); ++i)
+            {
+                if (types.at(i) == current.type)
+                {
+                    nextIndex = (i + 1) % types.size();
+                    break;
+                }
+            }
+            current.type = types.at(nextIndex);
+            setBand(mSelectedIndex, current);
+            return true;
         }
     }
 
-    this->replot();
+    if (mFrequencySlider.bounds.contains(pos))
+    {
+        mDragTarget = DragTarget::FrequencySlider;
+    }
+    else if (mGainSlider.bounds.contains(pos) && !isPassBand(mSelectedIndex))
+    {
+        mDragTarget = DragTarget::GainSlider;
+    }
+    else if (mQSlider.bounds.contains(pos))
+    {
+        mDragTarget = DragTarget::QSlider;
+    }
+    else
+    {
+        return true;
+    }
+
+    mUsingLiveGrid = true;
+    mEditing = true;
+    invalidateResponses(true);
+    emit editStarted(mSelectedIndex);
+    updateSliderFromPosition(mDragTarget, pos);
+    return true;
+}
+
+void EqCustomPlot::updateSliderFromPosition(DragTarget slider, const QPointF &pos)
+{
+    if (!isValidBand(mSelectedIndex))
+        return;
+
+    Band next = mBandStates[mSelectedIndex].value;
+    const auto sliderT = [&](const SliderGeometry &geometry) {
+        if (geometry.groove.width() <= 0.0)
+            return 0.0;
+        return clamped((pos.x() - geometry.groove.left()) / geometry.groove.width(), 0.0, 1.0);
+    };
+
+    switch (slider)
+    {
+    case DragTarget::FrequencySlider:
+        next.frequencyHz = frequencyForSliderT(sliderT(mFrequencySlider));
+        break;
+    case DragTarget::GainSlider:
+        if (!isPassBand(mSelectedIndex))
+            next.gainDb = kMinGainDb + sliderT(mGainSlider) * (kMaxGainDb - kMinGainDb);
+        break;
+    case DragTarget::QSlider:
+        next.q = qForSliderT(sliderT(mQSlider));
+        break;
+    default:
+        return;
+    }
+
+    setBand(mSelectedIndex, next);
+}
+
+int EqCustomPlot::hitBandHandle(const QPointF &pos) const
+{
+    int bestIndex = InvalidBand;
+    double bestDistance = std::numeric_limits<double>::max();
+    const double tolerance = std::max(30.0, mHandleSize * 0.85);
+
+    for (int i = 0; i < BandCount; ++i)
+    {
+        const QPointF point = bandPoint(i);
+        const double dx = point.x() - pos.x();
+        const double dy = point.y() - pos.y();
+        const double distance = std::sqrt(dx * dx + dy * dy);
+        if (distance <= tolerance && distance < bestDistance)
+        {
+            bestDistance = distance;
+            bestIndex = i;
+        }
+    }
+
+    return bestIndex;
+}
+
+QPointF EqCustomPlot::bandPoint(int index) const
+{
+    if (!isValidBand(index))
+        return QPointF();
+
+    const Band &band = mBandStates[index].value;
+    const double gain = isPassBand(index) ? 0.0 : band.gainDb;
+    return QPointF(xForFrequency(band.frequencyHz), yForGain(gain));
+}
+
+EqCustomPlot::Band EqCustomPlot::normalizedBand(int index, Band band) const
+{
+    band.frequencyHz = static_cast<int>(clamped(band.frequencyHz, kMinBandFrequency, kMaxBandFrequency));
+    band.gainDb = clamped(band.gainDb, kMinGainDb, kMaxGainDb);
+    band.q = clamped(band.q, kMinQ, kMaxQ);
+
+    if (index == EqHp)
+    {
+        band.type = eq::FilterType::Highpass;
+        band.gainDb = 0.0;
+    }
+    else if (index == EqLp)
+    {
+        band.type = eq::FilterType::Lowpass;
+        band.gainDb = 0.0;
+    }
+    else if (!isEditableType(band.type))
+    {
+        band.type = eq::FilterType::Peak;
+    }
+
+    band.q = std::round(band.q * 10.0) / 10.0;
+    band.gainDb = std::round(band.gainDb * 10.0) / 10.0;
+
+    return band;
+}
+
+bool EqCustomPlot::isValidBand(int index) const
+{
+    return index >= 0 && index < BandCount;
+}
+
+bool EqCustomPlot::isPassBand(int index) const
+{
+    return index == EqHp || index == EqLp;
+}
+
+bool EqCustomPlot::isEditableType(eq::FilterType type) const
+{
+    const QVector<eq::FilterType> types = editableTypes();
+    return std::find(types.begin(), types.end(), type) != types.end();
+}
+
+QVector<eq::FilterType> EqCustomPlot::editableTypes() const
+{
+    return {
+        eq::FilterType::Peak,      eq::FilterType::Lowshelf, eq::FilterType::Highshelf,
+        eq::FilterType::Bandpass,  eq::FilterType::Notch,    eq::FilterType::Allpass,
+    };
+}
+
+QString EqCustomPlot::bandLabel(int index) const
+{
+    if (index == EqHp)
+        return QStringLiteral("HP");
+    if (index == EqLp)
+        return QStringLiteral("LP");
+    if (index > EqHp && index < EqLp)
+        return QString::number(index);
+    return QStringLiteral("--");
+}
+
+QString EqCustomPlot::typeLabel(eq::FilterType type) const
+{
+    switch (type)
+    {
+    case eq::FilterType::Peak:
+        return QStringLiteral("Peak");
+    case eq::FilterType::Lowshelf:
+        return QStringLiteral("LowShelf");
+    case eq::FilterType::Highshelf:
+        return QStringLiteral("HighShelf");
+    case eq::FilterType::Lowpass:
+        return QStringLiteral("LowPass");
+    case eq::FilterType::Highpass:
+        return QStringLiteral("HighPass");
+    case eq::FilterType::Bandpass:
+        return QStringLiteral("BandPass");
+    case eq::FilterType::Notch:
+        return QStringLiteral("Notch");
+    case eq::FilterType::Allpass:
+        return QStringLiteral("AllPass");
+    default:
+        return QStringLiteral("Unknown");
+    }
+}
+
+double EqCustomPlot::xForFrequency(double frequencyHz) const
+{
+    if (mPlotRect.width() <= 0.0)
+        return mPlotRect.left();
+
+    const double safeFrequency = clamped(frequencyHz, kMinAxisFrequency, kMaxAxisFrequency);
+    const double t = (std::log10(safeFrequency) - kAxisMinLog) / (kAxisMaxLog - kAxisMinLog);
+    return mPlotRect.left() + t * mPlotRect.width();
+}
+
+double EqCustomPlot::yForGain(double gainDb) const
+{
+    if (mPlotRect.height() <= 0.0)
+        return mPlotRect.center().y();
+
+    const double clampedGain = clamped(gainDb, kMinGainDb, kMaxGainDb);
+    const double t = (clampedGain - kMinGainDb) / (kMaxGainDb - kMinGainDb);
+    return mPlotRect.bottom() - t * mPlotRect.height();
+}
+
+int EqCustomPlot::frequencyForX(double x) const
+{
+    if (mPlotRect.width() <= 0.0)
+        return kMinBandFrequency;
+
+    const double t = clamped((x - mPlotRect.left()) / mPlotRect.width(), 0.0, 1.0);
+    const double frequency = kMinAxisFrequency * std::pow(10.0, t * (kAxisMaxLog - kAxisMinLog));
+    return static_cast<int>(std::lround(clamped(frequency, kMinBandFrequency, kMaxBandFrequency)));
+}
+
+double EqCustomPlot::gainForY(double y) const
+{
+    if (mPlotRect.height() <= 0.0)
+        return 0.0;
+
+    const double t = clamped((mPlotRect.bottom() - y) / mPlotRect.height(), 0.0, 1.0);
+    return kMinGainDb + t * (kMaxGainDb - kMinGainDb);
+}
+
+double EqCustomPlot::sliderTForFrequency(int frequencyHz) const
+{
+    const double safeFrequency = clamped(frequencyHz, kMinBandFrequency, kMaxBandFrequency);
+    return (std::log10(safeFrequency) - kBandMinLog) / (kBandMaxLog - kBandMinLog);
+}
+
+int EqCustomPlot::frequencyForSliderT(double t) const
+{
+    const double frequency = kMinBandFrequency * std::pow(10.0, clamped(t, 0.0, 1.0) * (kBandMaxLog - kBandMinLog));
+    return static_cast<int>(std::lround(frequency));
+}
+
+double EqCustomPlot::sliderTForQ(double q) const
+{
+    const double minLog = std::log10(kMinQ);
+    const double maxLog = std::log10(kMaxQ);
+    return (std::log10(clamped(q, kMinQ, kMaxQ)) - minLog) / (maxLog - minLog);
+}
+
+double EqCustomPlot::qForSliderT(double t) const
+{
+    const double minLog = std::log10(kMinQ);
+    const double maxLog = std::log10(kMaxQ);
+    return std::pow(10.0, minLog + clamped(t, 0.0, 1.0) * (maxLog - minLog));
+}
+
+double EqCustomPlot::clampDisplayDb(double value) const
+{
+    if (std::isinf(value))
+        return value > 0 ? kMaxGainDb : kMinGainDb;
+    if (!std::isfinite(value))
+        return 0.0;
+    return clamped(value, kMinGainDb, kMaxGainDb);
+}
+
+const QVector<double> &EqCustomPlot::activeFrequencies() const
+{
+    return mUsingLiveGrid ? mLiveFrequencies : mFineFrequencies;
+}
+
+const eq::FrequencyGrid &EqCustomPlot::activeGrid() const
+{
+    return mUsingLiveGrid ? mLiveGrid : mFineGrid;
 }

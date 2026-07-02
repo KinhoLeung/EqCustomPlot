@@ -33,8 +33,24 @@ struct Coeff
     }
 };
 
+struct FrequencyGrid
+{
+    int sampleRate = 0;
+    QVector<double> frequencyHz;
+    QVector<double> cosW;
+    QVector<double> sinW;
+    QVector<double> cos2W;
+    QVector<double> sin2W;
+
+    int size() const;
+    bool isValid() const;
+};
+
 QVector<double> getFreqzn(const Coeff &coeff, int fs, const QVector<double> &f);
 QVector<double> getFreqzn(const QVector<Coeff> &coeffList, int fs, const QVector<double> &f);
+FrequencyGrid makeFrequencyGrid(int fs, const QVector<double> &f);
+void getFreqznFast(const Coeff &coeff, const FrequencyGrid &grid, QVector<double> &outDb);
+void getFreqznFast(const QVector<Coeff> &coeffList, const FrequencyGrid &grid, QVector<double> &outDb);
 Coeff getSectionsMatrix(double gain, int fc, double q, FilterType type, bool bypass, int fs);
 
 } // namespace eq

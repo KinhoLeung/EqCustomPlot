@@ -3,7 +3,7 @@
 <p align="center">
   <a href="README.md">English</a> | <a href="README_zh-CN.md">中文</a>
 </p>
-Interactive equalizer curve widget and demo application built with Qt 6 and QCustomPlot. It showcases a frequency response editor with a custom frequency axis ticker, light/dark SVG icons, and a simple Qt Widgets UI.
+Interactive equalizer curve widget and demo application built with Qt 6 Widgets. It uses a self-painted, touch-friendly plot surface with cached frequency response rendering, light/dark SVG icons, and a simple demo window.
 
 ![Screenshot 1](./1.png)
 ![Screenshot 2](./2.png)
@@ -11,24 +11,23 @@ Interactive equalizer curve widget and demo application built with Qt 6 and QCus
 
 ## Features
 
-- Interactive equalizer plot (QCustomPlot-based)
-- Custom frequency axis ticker (Hz/kHz labeling)
+- Self-painted interactive equalizer plot optimized for embedded touch screens
+- Cached frequency response calculation with a fast precomputed frequency grid
+- Touch-friendly controls for frequency, gain, Q, bypass, solo, reset, and filter type
 - Light and dark SVG icon sets for EQ bands and filters
 - Qt 6 Widgets app with a minimal `MainWindow` demo
-- Print/export support via Qt PrintSupport (extend as needed)
 
 ## Tech Stack
 
-- Qt 6.5+: Core, Widgets, Svg, PrintSupport
+- Qt 6.5+: Core, Widgets, Svg
 - CMake 3.19+
 - C++17
-- [QCustomPlot](https://www.qcustomplot.com/) (embedded source)
 
 ## Build
 
 Prerequisites:
 
-- Install Qt 6.5+ with modules: Core, Widgets, Svg, PrintSupport
+- Install Qt 6.5+ with modules: Core, Widgets, Svg
 - Install CMake ≥ 3.19 and a C++17 compiler
 
 Example (Windows, MSVC + Ninja):
@@ -74,14 +73,17 @@ You can embed the custom plot widget into your own Qt application. A minimal exa
 // ...
 auto eqPlot = new EqCustomPlot(this);     // QWidget*
 setCentralWidget(eqPlot);                 // in your QMainWindow
+
+// Optional: synchronize UI edits to your DSP layer.
+connect(eqPlot, &EqCustomPlot::bandChanged, this, [](int index, EqCustomPlot::Band band) {
+    // band.frequencyHz, band.gainDb, band.q, band.type, band.bypass
+});
 ```
 
 Key components to explore:
 
-- `eqcustomplot.h/.cpp`: custom equalizer plot widget (QCustomPlot-based)
-- `qcpaxistickerfreq.h/.cpp`: frequency axis ticker (Hz/kHz)
-- `eq.h/.cpp`: equalizer data/model and curve computation
-- `qcustomplot.h/.cpp`: embedded plotting library
+- `eqcustomplot.h/.cpp`: self-painted touch equalizer widget
+- `eq.h/.cpp`: equalizer data/model and cached frequency response computation
 - `mainwindow.*`, `main.cpp`, `mainwindow.ui`: demo application
 
 Assets:

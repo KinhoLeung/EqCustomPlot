@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "eqcustomplot.h"
 #include "ui_mainwindow.h"
+#include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {

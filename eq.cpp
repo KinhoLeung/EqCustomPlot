@@ -1,12 +1,16 @@
 #include "eq.h"
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <limits>
 
 namespace eq
 {
 
 namespace
 {
+constexpr double kPi = 3.141592653589793238462643383279502884;
+
 /**
  * @brief 计算某组滤波器下的频响
  *
@@ -67,7 +71,36 @@ double getPhase(const std::complex<double> &complex)
 {
     return std::atan2(complex.imag(), complex.real());
 }
+
+double freqResponseDbAt(const Coeff &coeff, double cosW, double sinW, double cos2W, double sin2W)
+{
+    const double numeratorReal = coeff.B0 + coeff.B1 * cosW + coeff.B2 * cos2W;
+    const double numeratorImag = -(coeff.B1 * sinW + coeff.B2 * sin2W);
+    const double denominatorReal = coeff.A0 + coeff.A1 * cosW + coeff.A2 * cos2W;
+    const double denominatorImag = -(coeff.A1 * sinW + coeff.A2 * sin2W);
+
+    const double numeratorPower = numeratorReal * numeratorReal + numeratorImag * numeratorImag;
+    const double denominatorPower = denominatorReal * denominatorReal + denominatorImag * denominatorImag;
+
+    if (denominatorPower <= std::numeric_limits<double>::min())
+        return std::numeric_limits<double>::infinity();
+    if (numeratorPower <= std::numeric_limits<double>::min())
+        return -std::numeric_limits<double>::infinity();
+
+    return 10.0 * std::log10(numeratorPower / denominatorPower);
+}
 } // namespace
+
+int FrequencyGrid::size() const
+{
+    return frequencyHz.size();
+}
+
+bool FrequencyGrid::isValid() const
+{
+    const int n = frequencyHz.size();
+    return sampleRate > 0 && cosW.size() == n && sinW.size() == n && cos2W.size() == n && sin2W.size() == n;
+}
 
 /**
  * @brief 计算n个点的频率响应
@@ -85,7 +118,7 @@ QVector<double> getFreqzn(const Coeff &coeff, int fs, const QVector<double> &f)
     QVector<double> h(n);
     for (int i = 0; i < n; i++)
     {
-        double w = 2 * M_PI * (f.at(i)) / fs;
+        double w = 2 * kPi * (f.at(i)) / fs;
         std::complex<double> complex = getFreqw(coeff, w);
         h[i] = 20 * std::log10(getAmplitude(complex));
     }
@@ -108,11 +141,79 @@ QVector<double> getFreqzn(const QVector<Coeff> &coeffList, int fs, const QVector
     QVector<double> h(n);
     for (int i = 0; i < n; i++)
     {
-        double w = 2 * M_PI * (f.at(i)) / fs;
+        double w = 2 * kPi * (f.at(i)) / fs;
         std::complex<double> complex = getFreqw(coeffList, w);
         h[i] = 20 * std::log10(getAmplitude(complex));
     }
     return h;
+}
+
+FrequencyGrid makeFrequencyGrid(int fs, const QVector<double> &f)
+{
+    FrequencyGrid grid;
+    grid.sampleRate = fs;
+    grid.frequencyHz = f;
+
+    const int n = f.size();
+    grid.cosW.resize(n);
+    grid.sinW.resize(n);
+    grid.cos2W.resize(n);
+    grid.sin2W.resize(n);
+
+    if (fs <= 0)
+        return grid;
+
+    const double wScale = 2.0 * kPi / static_cast<double>(fs);
+    for (int i = 0; i < n; ++i)
+    {
+        const double w = f.at(i) * wScale;
+        grid.cosW[i] = std::cos(w);
+        grid.sinW[i] = std::sin(w);
+        grid.cos2W[i] = std::cos(2.0 * w);
+        grid.sin2W[i] = std::sin(2.0 * w);
+    }
+
+    return grid;
+}
+
+void getFreqznFast(const Coeff &coeff, const FrequencyGrid &grid, QVector<double> &outDb)
+{
+    if (!grid.isValid())
+    {
+        outDb.clear();
+        return;
+    }
+
+    const int n = grid.size();
+    if (outDb.size() != n)
+        outDb.resize(n);
+
+    for (int i = 0; i < n; ++i)
+    {
+        outDb[i] = freqResponseDbAt(coeff, grid.cosW.at(i), grid.sinW.at(i), grid.cos2W.at(i), grid.sin2W.at(i));
+    }
+}
+
+void getFreqznFast(const QVector<Coeff> &coeffList, const FrequencyGrid &grid, QVector<double> &outDb)
+{
+    if (!grid.isValid() || coeffList.empty())
+    {
+        outDb.clear();
+        return;
+    }
+
+    const int n = grid.size();
+    if (outDb.size() != n)
+        outDb.resize(n);
+    std::fill(outDb.begin(), outDb.end(), 0.0);
+
+    for (const Coeff &coeff : coeffList)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            outDb[i] += freqResponseDbAt(coeff, grid.cosW.at(i), grid.sinW.at(i), grid.cos2W.at(i), grid.sin2W.at(i));
+        }
+    }
 }
 
 /**
@@ -133,8 +234,8 @@ Coeff getSectionsMatrix(double gain, int fc, double q, FilterType type, bool byp
     FilterType bqtype = bypass ? FilterType::Unknown : type;
     double sA = std::pow(10, gain / 40);
     double sqrt_sA = std::sqrt(sA);
-    double sin_w = std::sin(M_PI * w);
-    double cos_w = std::cos(M_PI * w);
+    double sin_w = std::sin(kPi * w);
+    double cos_w = std::cos(kPi * w);
     double alpha = sin_w / (2 * q);
 
     double b0, b1, b2, a0, a1, a2;

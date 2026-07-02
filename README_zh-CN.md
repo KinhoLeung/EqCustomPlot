@@ -3,7 +3,7 @@
 <p align="center">
   <a href="README.md">English</a> | <a href="README_zh-CN.md">中文</a>
 </p>
-一个基于 Qt 6 和 QCustomPlot 的交互式均衡器曲线控件与演示程序。它展示了可编辑的频响曲线、自定义频率坐标刻度（Hz/kHz）、明暗两套 SVG 图标，以及简洁的 Qt Widgets 界面。
+一个基于 Qt 6 Widgets 的交互式均衡器曲线控件与演示程序。它使用自绘、触摸友好的绘图界面，带有频响缓存计算、明暗两套 SVG 图标，以及简洁的示例窗口。
 
 ![截图 1](./1.png)
 ![截图 2](./2.png)
@@ -11,24 +11,23 @@
 
 ## 特性
 
-- 基于 QCustomPlot 的交互式均衡器曲线
-- 自定义频率轴刻度（Hz/kHz 显示）
+- 面向嵌入式触摸屏优化的自绘交互式均衡器曲线
+- 基于预计算频率网格的缓存式频响计算
+- 触摸友好的 Frequency、Gain、Q、Bypass、Solo、Reset、Filter Type 控件
 - 明/暗两套 SVG 图标（0–9 频段与 LP/HP，实心/描边）
 - 基于 Qt Widgets 的示例窗口
-- 通过 Qt PrintSupport 支持打印/导出（可按需扩展）
 
 ## 技术栈
 
-- Qt 6.5+：Core、Widgets、Svg、PrintSupport
+- Qt 6.5+：Core、Widgets、Svg
 - CMake 3.19+
 - C++17
-- [QCustomPlot](https://www.qcustomplot.com/)（源码内置）
 
 ## 构建
 
 前置条件：
 
-- 安装 Qt 6.5+，勾选 Core、Widgets、Svg、PrintSupport 模块
+- 安装 Qt 6.5+，勾选 Core、Widgets、Svg 模块
 - 安装 CMake ≥ 3.19 与支持 C++17 的编译器
 
 示例（Windows，MSVC + Ninja）：
@@ -74,14 +73,17 @@ cmake --install build
 // ...
 auto eqPlot = new EqCustomPlot(this);   // QWidget*
 setCentralWidget(eqPlot);               // 在你的 QMainWindow 中
+
+// 可选：把 UI 编辑同步到你的 DSP 层。
+connect(eqPlot, &EqCustomPlot::bandChanged, this, [](int index, EqCustomPlot::Band band) {
+    // band.frequencyHz, band.gainDb, band.q, band.type, band.bypass
+});
 ```
 
 建议阅读以下核心文件：
 
-- `eqcustomplot.h/.cpp`：自定义均衡器绘图控件（基于 QCustomPlot）
-- `qcpaxistickerfreq.h/.cpp`：频率坐标刻度（Hz/kHz）
-- `eq.h/.cpp`：均衡器数据/模型与曲线计算
-- `qcustomplot.h/.cpp`：嵌入的绘图库
+- `eqcustomplot.h/.cpp`：自绘触摸均衡器控件
+- `eq.h/.cpp`：均衡器数据/模型与缓存式频响计算
 - `mainwindow.*`、`main.cpp`、`mainwindow.ui`：演示应用
 
 资源文件：
@@ -92,4 +94,3 @@ setCentralWidget(eqPlot);               // 在你的 QMainWindow 中
 ## 参与贡献
 
 欢迎提交 Issue 与 PR。请尽量保持修改聚焦并补充必要说明。
-

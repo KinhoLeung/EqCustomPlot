@@ -578,19 +578,44 @@ void EqCustomPlot::rebuildPaths()
         if (count <= 0)
             return path;
 
-        const QPointF firstPoint(xForFrequency(frequencies.at(0)), yForGain(clampDisplayDb(values.at(0))));
-        path.moveTo(firstPoint);
+        constexpr double fillThresholdDb = 0.25;
+        const double zeroY = yForGain(0.0);
+        int segmentStart = -1;
 
-        QPointF lastPoint = firstPoint;
-        for (int i = 1; i < count; ++i)
+        auto isFillVisible = [&](int index) {
+            const double value = values.at(index);
+            return std::isfinite(value) && std::abs(value) >= fillThresholdDb;
+        };
+
+        auto appendSegment = [&](int first, int last) {
+            if (first < 0 || last < first)
+                return;
+
+            const double firstX = xForFrequency(frequencies.at(first));
+            const double lastX = xForFrequency(frequencies.at(last));
+
+            path.moveTo(firstX, zeroY);
+            for (int i = first; i <= last; ++i)
+            {
+                path.lineTo(xForFrequency(frequencies.at(i)), yForGain(clampDisplayDb(values.at(i))));
+            }
+            path.lineTo(lastX, zeroY);
+            path.closeSubpath();
+        };
+
+        for (int i = 0; i < count; ++i)
         {
-            lastPoint = QPointF(xForFrequency(frequencies.at(i)), yForGain(clampDisplayDb(values.at(i))));
-            path.lineTo(lastPoint);
+            const bool visible = isFillVisible(i);
+            if (visible && segmentStart < 0)
+                segmentStart = i;
+
+            if ((!visible || i == count - 1) && segmentStart >= 0)
+            {
+                appendSegment(segmentStart, visible && i == count - 1 ? i : i - 1);
+                segmentStart = -1;
+            }
         }
 
-        path.lineTo(lastPoint.x(), mPlotRect.bottom());
-        path.lineTo(firstPoint.x(), mPlotRect.bottom());
-        path.closeSubpath();
         return path;
     };
 
@@ -599,7 +624,7 @@ void EqCustomPlot::rebuildPaths()
     {
         const QVector<double> &selectedResponse = mBandStates[mSelectedIndex].responseDb;
         mSelectedPath = buildPath(selectedResponse);
-        mSelectedFillPath = buildFillPath(selectedResponse);
+        mSelectedFillPath = isPassBand(mSelectedIndex) ? QPainterPath() : buildFillPath(selectedResponse);
     }
     else
     {
@@ -702,31 +727,29 @@ void EqCustomPlot::drawCurves(QPainter &painter)
     painter.save();
     painter.setClipRect(mPlotRect.adjusted(1.0, 1.0, -1.0, -1.0));
 
+    QColor overallCurve = mAccentColor;
+    overallCurve.setAlpha(175);
+    painter.setPen(QPen(overallCurve, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.drawPath(mOverallPath);
+
     if (isValidBand(mSelectedIndex) && !mSelectedFillPath.isEmpty())
     {
-        QLinearGradient fillGradient(mPlotRect.topLeft(), mPlotRect.bottomLeft());
-        QColor top = mAccentColor;
-        QColor bottom = mAccentColor;
-        top.setAlpha(58);
-        bottom.setAlpha(8);
-        fillGradient.setColorAt(0.0, top);
-        fillGradient.setColorAt(1.0, bottom);
+        QColor fill = mAccentColor;
+        fill.setAlphaF(0.25);
 
         painter.setPen(Qt::NoPen);
-        painter.setBrush(fillGradient);
+        painter.setBrush(fill);
         painter.drawPath(mSelectedFillPath);
     }
 
     if (isValidBand(mSelectedIndex) && !mSelectedPath.isEmpty())
     {
         QColor selectedCurve = mAccentColor;
-        selectedCurve.setAlpha(95);
-        painter.setPen(QPen(selectedCurve, 1.4));
+        selectedCurve.setAlpha(235);
+        painter.setPen(QPen(selectedCurve, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter.drawPath(mSelectedPath);
     }
 
-    painter.setPen(QPen(mAccentColor, 2.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    painter.drawPath(mOverallPath);
     painter.restore();
 }
 

@@ -5,6 +5,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QPalette>
 #include <QResizeEvent>
 #include <QStyleHints>
 #include <QTouchEvent>
@@ -63,13 +64,45 @@ QString formatFrequency(int frequencyHz)
     return QStringLiteral("%1").arg(frequencyHz);
 }
 
-QString iconStemForBand(int index)
+QPointF mouseEventPosition(const QMouseEvent *event)
 {
-    if (index == EqCustomPlot::EqHp)
-        return QStringLiteral("hp");
-    if (index == EqCustomPlot::EqLp)
-        return QStringLiteral("lp");
-    return QString::number(index);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return event->position();
+#else
+    return event->localPos();
+#endif
+}
+
+bool firstTouchPosition(const QTouchEvent *event, QPointF &position)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    if (event->points().isEmpty())
+        return false;
+    position = event->points().first().position();
+#else
+    if (event->touchPoints().isEmpty())
+        return false;
+    position = event->touchPoints().first().pos();
+#endif
+    return true;
+}
+
+bool isDarkPalette(const QPalette &palette)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    return QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+#else
+    return palette.color(QPalette::Window).lightness() < 128;
+#endif
+}
+
+QColor accentColor(const QPalette &palette)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    return palette.color(QPalette::Accent);
+#else
+    return palette.color(QPalette::Highlight);
+#endif
 }
 } // namespace
 
@@ -222,10 +255,11 @@ bool EqCustomPlot::event(QEvent *event)
     case QEvent::TouchBegin:
     {
         auto *touch = static_cast<QTouchEvent *>(event);
-        if (!touch->points().isEmpty())
+        QPointF position;
+        if (firstTouchPosition(touch, position))
         {
             event->accept();
-            beginInteraction(touch->points().first().position());
+            beginInteraction(position);
             return true;
         }
         break;
@@ -233,10 +267,11 @@ bool EqCustomPlot::event(QEvent *event)
     case QEvent::TouchUpdate:
     {
         auto *touch = static_cast<QTouchEvent *>(event);
-        if (!touch->points().isEmpty())
+        QPointF position;
+        if (firstTouchPosition(touch, position))
         {
             event->accept();
-            updateInteraction(touch->points().first().position());
+            updateInteraction(position);
             return true;
         }
         break;
@@ -275,7 +310,6 @@ void EqCustomPlot::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     rebuildLayout();
-    rebuildIconCache();
     invalidateBackground();
     mPathDirty = true;
     requestFrame(true);
@@ -289,7 +323,7 @@ void EqCustomPlot::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (!beginInteraction(event->position()))
+    if (!beginInteraction(mouseEventPosition(event)))
         setSelectedBand(InvalidBand);
 
     event->accept();
@@ -297,7 +331,7 @@ void EqCustomPlot::mousePressEvent(QMouseEvent *event)
 
 void EqCustomPlot::mouseMoveEvent(QMouseEvent *event)
 {
-    updateInteraction(event->position());
+    updateInteraction(mouseEventPosition(event));
     event->accept();
 }
 
@@ -315,7 +349,7 @@ void EqCustomPlot::mouseReleaseEvent(QMouseEvent *event)
 
 void EqCustomPlot::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    const int hit = hitBandHandle(event->position());
+    const int hit = hitBandHandle(mouseEventPosition(event));
     if (isValidBand(hit))
     {
         setSelectedBand(hit);
@@ -372,8 +406,8 @@ void EqCustomPlot::initializeFrequencyData()
 
 void EqCustomPlot::refreshTheme()
 {
-    const bool dark = QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
     const QPalette pal = palette();
+    const bool dark = isDarkPalette(pal);
 
     mBackgroundColor = dark ? QColor(9, 11, 13) : QColor(250, 251, 252);
     mPanelColor = dark ? QColor(24, 27, 31) : QColor(238, 241, 245);
@@ -384,32 +418,14 @@ void EqCustomPlot::refreshTheme()
     mGridColor.setAlpha(dark ? 54 : 46);
     mSubGridColor = mTextColor;
     mSubGridColor.setAlpha(dark ? 26 : 22);
-    mAccentColor = pal.color(QPalette::Accent);
+    mAccentColor = accentColor(pal);
     mAccentFillColor = mAccentColor;
     mAccentFillColor.setAlpha(45);
     mDisabledColor = mTextColor;
     mDisabledColor.setAlpha(70);
 
-    rebuildIconCache();
     invalidateBackground();
     requestFrame(true);
-}
-
-void EqCustomPlot::rebuildIconCache()
-{
-    if (mHandleSize <= 0)
-        return;
-
-    const bool dark = QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
-    const QString prefix = dark ? QStringLiteral(":/image/dark/") : QStringLiteral(":/image/light/");
-    const QSize iconSize(mHandleSize, mHandleSize);
-
-    for (int i = 0; i < BandCount; ++i)
-    {
-        const QString stem = iconStemForBand(i);
-        mBandStates[i].selectedIcon = QIcon(prefix + stem + QStringLiteral("_filled.svg")).pixmap(iconSize);
-        mBandStates[i].unselectedIcon = QIcon(prefix + stem + QStringLiteral("_regular.svg")).pixmap(iconSize);
-    }
 }
 
 void EqCustomPlot::rebuildLayout()
@@ -556,8 +572,40 @@ void EqCustomPlot::rebuildPaths()
         return path;
     };
 
+    auto buildFillPath = [&](const QVector<double> &values) {
+        QPainterPath path;
+        const int count = std::min(frequencies.size(), values.size());
+        if (count <= 0)
+            return path;
+
+        const QPointF firstPoint(xForFrequency(frequencies.at(0)), yForGain(clampDisplayDb(values.at(0))));
+        path.moveTo(firstPoint);
+
+        QPointF lastPoint = firstPoint;
+        for (int i = 1; i < count; ++i)
+        {
+            lastPoint = QPointF(xForFrequency(frequencies.at(i)), yForGain(clampDisplayDb(values.at(i))));
+            path.lineTo(lastPoint);
+        }
+
+        path.lineTo(lastPoint.x(), mPlotRect.bottom());
+        path.lineTo(firstPoint.x(), mPlotRect.bottom());
+        path.closeSubpath();
+        return path;
+    };
+
     mOverallPath = pointCount > 0 ? buildPath(mOverallDb) : QPainterPath();
-    mSelectedPath = isValidBand(mSelectedIndex) ? buildPath(mBandStates[mSelectedIndex].responseDb) : QPainterPath();
+    if (isValidBand(mSelectedIndex))
+    {
+        const QVector<double> &selectedResponse = mBandStates[mSelectedIndex].responseDb;
+        mSelectedPath = buildPath(selectedResponse);
+        mSelectedFillPath = buildFillPath(selectedResponse);
+    }
+    else
+    {
+        mSelectedPath = QPainterPath();
+        mSelectedFillPath = QPainterPath();
+    }
     mPathDirty = false;
 }
 
@@ -654,6 +702,21 @@ void EqCustomPlot::drawCurves(QPainter &painter)
     painter.save();
     painter.setClipRect(mPlotRect.adjusted(1.0, 1.0, -1.0, -1.0));
 
+    if (isValidBand(mSelectedIndex) && !mSelectedFillPath.isEmpty())
+    {
+        QLinearGradient fillGradient(mPlotRect.topLeft(), mPlotRect.bottomLeft());
+        QColor top = mAccentColor;
+        QColor bottom = mAccentColor;
+        top.setAlpha(58);
+        bottom.setAlpha(8);
+        fillGradient.setColorAt(0.0, top);
+        fillGradient.setColorAt(1.0, bottom);
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(fillGradient);
+        painter.drawPath(mSelectedFillPath);
+    }
+
     if (isValidBand(mSelectedIndex) && !mSelectedPath.isEmpty())
     {
         QColor selectedCurve = mAccentColor;
@@ -684,21 +747,36 @@ void EqCustomPlot::drawHandles(QPainter &painter)
         painter.save();
         painter.setOpacity(mutedBySolo ? 0.32 : (bypassed ? 0.45 : 1.0));
 
-        const QPixmap &pixmap = selected ? mBandStates[i].selectedIcon : mBandStates[i].unselectedIcon;
-        if (!pixmap.isNull())
+        QColor fill = selected ? mAccentColor : mPanelColor;
+        QColor border = selected ? mAccentColor : mTextColor;
+        QColor labelColor = selected ? mBackgroundColor : mTextColor;
+
+        if (bypassed)
         {
-            const qreal dpr = pixmap.devicePixelRatio();
-            const QRectF source(0.0, 0.0, pixmap.width() / dpr, pixmap.height() / dpr);
-            painter.drawPixmap(target, pixmap, source);
+            fill = mPanelColor;
+            border = mDisabledColor;
+            labelColor = mDisabledColor;
         }
-        else
+
+        if (selected)
         {
-            painter.setBrush(selected ? mAccentColor : mPanelColor);
-            painter.setPen(QPen(selected ? mAccentColor : mTextColor, 1.5));
-            painter.drawEllipse(target);
-            painter.setPen(selected ? mBackgroundColor : mTextColor);
-            painter.drawText(target, Qt::AlignCenter, bandLabel(i));
+            QColor halo = mAccentColor;
+            halo.setAlpha(55);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(halo);
+            painter.drawEllipse(target.adjusted(-4.0, -4.0, 4.0, 4.0));
         }
+
+        painter.setBrush(fill);
+        painter.setPen(QPen(border, selected ? 2.0 : 1.4));
+        painter.drawEllipse(target);
+
+        QFont labelFont = painter.font();
+        labelFont.setBold(selected);
+        labelFont.setPointSizeF(std::max(8.0, target.height() * 0.34));
+        painter.setFont(labelFont);
+        painter.setPen(labelColor);
+        painter.drawText(target, Qt::AlignCenter, bandLabel(i));
 
         painter.restore();
     }
@@ -745,24 +823,6 @@ void EqCustomPlot::drawPanel(QPainter &painter)
         const QString text = hasSelection ? QStringLiteral("Type: %1").arg(typeLabel(current.type))
                                           : QStringLiteral("Type");
         drawButton(painter, mTypeButtonRect, text, false, typeEnabled);
-    }
-
-    if (hasSelection)
-    {
-        QFont infoFont = font();
-        infoFont.setBold(true);
-        painter.setFont(infoFont);
-        painter.setPen(mTextColor);
-        const QRectF infoRect(mPanelRect.left() + 12.0, mPanelRect.top() - 28.0, mPanelRect.width() - 24.0, 22.0);
-        const QString bypassText = current.bypass ? QStringLiteral("  Bypassed") : QString();
-        const QString soloText = mSoloIndex == mSelectedIndex ? QStringLiteral("  Solo") : QString();
-        painter.drawText(infoRect, Qt::AlignLeft | Qt::AlignVCenter,
-                         QStringLiteral("%1  %2 Hz  %3 dB  Q %4%5%6")
-                             .arg(bandLabel(mSelectedIndex))
-                             .arg(current.frequencyHz)
-                             .arg(current.gainDb, 0, 'f', 1)
-                             .arg(current.q, 0, 'f', 1)
-                             .arg(bypassText, soloText));
     }
 
     painter.restore();

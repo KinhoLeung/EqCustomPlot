@@ -4,7 +4,6 @@
 
 #include <QColor>
 #include <QElapsedTimer>
-#include <QIcon>
 #include <QPainterPath>
 #include <QPixmap>
 #include <QRectF>
@@ -92,8 +91,6 @@ class EqCustomPlot : public QWidget
         Band defaults;
         eq::Coeff coeff;
         QVector<double> responseDb;
-        QPixmap selectedIcon;
-        QPixmap unselectedIcon;
         bool dirty = true;
     };
 
@@ -124,7 +121,6 @@ class EqCustomPlot : public QWidget
     void initializeBands();
     void initializeFrequencyData();
     void refreshTheme();
-    void rebuildIconCache();
     void rebuildLayout();
     void invalidateBackground();
     void invalidateResponses(bool allBands);
@@ -191,6 +187,7 @@ class EqCustomPlot : public QWidget
     QSize mBackgroundCacheSize;
     QPainterPath mOverallPath;
     QPainterPath mSelectedPath;
+    QPainterPath mSelectedFillPath;
 
     QColor mBackgroundColor;
     QColor mPanelColor;

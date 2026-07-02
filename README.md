@@ -3,7 +3,7 @@
 <p align="center">
   <a href="README.md">English</a> | <a href="README_zh-CN.md">中文</a>
 </p>
-Interactive equalizer curve widget and demo application built with Qt 6 Widgets. It uses a self-painted, touch-friendly plot surface with cached frequency response rendering, light/dark SVG icons, and a simple demo window.
+Interactive equalizer curve widget and demo application built with Qt Widgets. It uses a self-painted, touch-friendly plot surface with cached frequency response rendering, painter-drawn controls, and a simple demo window.
 
 ![Screenshot 1](./1.png)
 ![Screenshot 2](./2.png)
@@ -14,12 +14,12 @@ Interactive equalizer curve widget and demo application built with Qt 6 Widgets.
 - Self-painted interactive equalizer plot optimized for embedded touch screens
 - Cached frequency response calculation with a fast precomputed frequency grid
 - Touch-friendly controls for frequency, gain, Q, bypass, solo, reset, and filter type
-- Light and dark SVG icon sets for EQ bands and filters
+- Painter-drawn EQ handles with no QtSvg runtime dependency
 - Qt 6 Widgets app with a minimal `MainWindow` demo
 
 ## Tech Stack
 
-- Qt 6.5+: Core, Widgets, Svg
+- Qt 5.15+ or Qt 6.5+: Core, Widgets
 - CMake 3.19+
 - C++17
 
@@ -27,7 +27,7 @@ Interactive equalizer curve widget and demo application built with Qt 6 Widgets.
 
 Prerequisites:
 
-- Install Qt 6.5+ with modules: Core, Widgets, Svg
+- Install Qt 5.15+ or Qt 6.5+ with modules: Core, Widgets
 - Install CMake ≥ 3.19 and a C++17 compiler
 
 Example (Windows, MSVC + Ninja):
@@ -88,8 +88,8 @@ Key components to explore:
 
 Assets:
 
-- `image/light/*.svg`, `image/dark/*.svg`: icons for bands 0–9 and LP/HP, both filled/regular
-- `resources.qrc`: resource manifest
+- `image/light/*.svg`, `image/dark/*.svg`: legacy icon source files, not linked into the current executable
+- `resources.qrc`: legacy resource manifest, not used by the current CMake target
 
 ## Contributing
 

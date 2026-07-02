@@ -3,7 +3,7 @@
 <p align="center">
   <a href="README.md">English</a> | <a href="README_zh-CN.md">中文</a>
 </p>
-一个基于 Qt 6 Widgets 的交互式均衡器曲线控件与演示程序。它使用自绘、触摸友好的绘图界面，带有频响缓存计算、明暗两套 SVG 图标，以及简洁的示例窗口。
+一个基于 Qt Widgets 的交互式均衡器曲线控件与演示程序。它使用自绘、触摸友好的绘图界面，带有频响缓存计算、Painter 自绘控制点，以及简洁的示例窗口。
 
 ![截图 1](./1.png)
 ![截图 2](./2.png)
@@ -14,12 +14,12 @@
 - 面向嵌入式触摸屏优化的自绘交互式均衡器曲线
 - 基于预计算频率网格的缓存式频响计算
 - 触摸友好的 Frequency、Gain、Q、Bypass、Solo、Reset、Filter Type 控件
-- 明/暗两套 SVG 图标（0–9 频段与 LP/HP，实心/描边）
+- 自绘 EQ 控制点，不依赖 QtSvg 运行库
 - 基于 Qt Widgets 的示例窗口
 
 ## 技术栈
 
-- Qt 6.5+：Core、Widgets、Svg
+- Qt 5.15+ 或 Qt 6.5+：Core、Widgets
 - CMake 3.19+
 - C++17
 
@@ -27,7 +27,7 @@
 
 前置条件：
 
-- 安装 Qt 6.5+，勾选 Core、Widgets、Svg 模块
+- 安装 Qt 5.15+ 或 Qt 6.5+，勾选 Core、Widgets 模块
 - 安装 CMake ≥ 3.19 与支持 C++17 的编译器
 
 示例（Windows，MSVC + Ninja）：
@@ -88,8 +88,8 @@ connect(eqPlot, &EqCustomPlot::bandChanged, this, [](int index, EqCustomPlot::Ba
 
 资源文件：
 
-- `image/light/*.svg`、`image/dark/*.svg`：0–9 与 LP/HP 图标（实心/描边）
-- `resources.qrc`：资源清单
+- `image/light/*.svg`、`image/dark/*.svg`：旧版图标素材，当前可执行程序不再链接使用
+- `resources.qrc`：旧版资源清单，当前 CMake 目标不再使用
 
 ## 参与贡献
 
